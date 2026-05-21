@@ -67,10 +67,7 @@ app.use((err, req, res, next) => {
 
 /* ---------------- DATABASE CONNECTION ---------------- */
 mongoose
-  .connect(process.env.MONGO_URI, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-  })
+  .connect(process.env.MONGO_URI)
   .then(() => console.log("MongoDB connected"))
   .catch((err) => {
     console.log("MongoDB connection error:", err);
