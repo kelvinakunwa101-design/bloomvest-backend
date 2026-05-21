@@ -10,16 +10,23 @@ dotenv.config();
 
 const app = express();
 
-/* ---------------- MIDDLEWARE ---------------- */
-app.use(cors());
+/* ---------------- SECURITY MIDDLEWARE ---------------- */
+app.use(
+  cors({
+    origin: "*",
+    credentials: true,
+  })
+);
+
 app.use(express.json());
 app.use(helmet());
 app.use(morgan("dev"));
 
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 mins
-  max: 100, // limit requests
+  windowMs: 15 * 60 * 1000,
+  max: 100,
 });
+
 app.use(limiter);
 
 /* ---------------- ROUTES ---------------- */
@@ -31,7 +38,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/transactions", transactionRoutes);
 app.use("/api/investments", investmentRoutes);
 
-/* ---------------- TEST ROUTES ---------------- */
+/* ---------------- HEALTH CHECK ---------------- */
 app.get("/", (req, res) => {
   res.send("Bloomvest API is running...");
 });
@@ -40,18 +47,30 @@ app.get("/api/test", (req, res) => {
   res.json({ message: "API is working perfectly 🚀" });
 });
 
+app.get("/api/health", (req, res) => {
+  res.json({
+    status: "ok",
+    service: "bloomvest-backend",
+    time: new Date(),
+  });
+});
+
 /* ---------------- ERROR HANDLER ---------------- */
 app.use((err, req, res, next) => {
   console.error(err.stack);
+
   res.status(500).json({
     message: "Server Error",
     error: err.message,
   });
 });
 
-/* ---------------- DATABASE ---------------- */
+/* ---------------- DATABASE CONNECTION ---------------- */
 mongoose
-  .connect(process.env.MONGO_URI)
+  .connect(process.env.MONGO_URI, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+  })
   .then(() => console.log("MongoDB connected"))
   .catch((err) => {
     console.log("MongoDB connection error:", err);
