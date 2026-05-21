@@ -13,7 +13,7 @@ const app = express();
 /* ---------------- SECURITY MIDDLEWARE ---------------- */
 app.use(
   cors({
-    origin: "*",
+    origin: process.env.CLIENT_URL || "*",
     credentials: true,
   })
 );
@@ -22,6 +22,7 @@ app.use(express.json());
 app.use(helmet());
 app.use(morgan("dev"));
 
+/* ---------------- RATE LIMIT ---------------- */
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100,
@@ -30,17 +31,19 @@ const limiter = rateLimit({
 app.use(limiter);
 
 /* ---------------- ROUTES ---------------- */
-const transactionRoutes = require("./routes/transactions");
 const authRoutes = require("./routes/auth");
+const transactionRoutes = require("./routes/transactions");
 const investmentRoutes = require("./routes/investment");
+const walletRoutes = require("./routes/wallet"); 
 
 app.use("/api/auth", authRoutes);
 app.use("/api/transactions", transactionRoutes);
 app.use("/api/investments", investmentRoutes);
+app.use("/api/wallet", walletRoutes); 
 
 /* ---------------- HEALTH CHECK ---------------- */
 app.get("/", (req, res) => {
-  res.send("Bloomvest API is running...");
+  res.send("🚀 Bloomvest API is running...");
 });
 
 app.get("/api/test", (req, res) => {
@@ -51,13 +54,13 @@ app.get("/api/health", (req, res) => {
   res.json({
     status: "ok",
     service: "bloomvest-backend",
-    time: new Date(),
+    time: new Date().toISOString(),
   });
 });
 
 /* ---------------- ERROR HANDLER ---------------- */
 app.use((err, req, res, next) => {
-  console.error(err.stack);
+  console.error("SERVER ERROR:", err);
 
   res.status(500).json({
     message: "Server Error",
@@ -65,18 +68,19 @@ app.use((err, req, res, next) => {
   });
 });
 
-/* ---------------- DATABASE CONNECTION ---------------- */
+/* ---------------- DATABASE ---------------- */
 mongoose
   .connect(process.env.MONGO_URI)
-  .then(() => console.log("MongoDB connected"))
+  .then(() => console.log("MongoDB connected successfully"))
   .catch((err) => {
     console.log("MongoDB connection error:", err);
     process.exit(1);
   });
 
-/* ---------------- SERVER ---------------- */
+/* ---------------- START SERVER ---------------- */
 const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`📡 Environment: ${process.env.NODE_ENV || "development"}`);
 });

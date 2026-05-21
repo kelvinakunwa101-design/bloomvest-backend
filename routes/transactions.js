@@ -3,6 +3,7 @@ const router = express.Router();
 
 const protect = require("../middleware/authMiddleware");
 const Transaction = require("../models/Transaction");
+const Wallet = require("../models/Wallet"); // ✅ NEW IMPORT
 
 /* ==============================
    GET ALL USER TRANSACTIONS
@@ -20,7 +21,7 @@ router.get("/", protect, async (req, res) => {
 });
 
 /* ==============================
-   CREATE TRANSACTION (REAL FINTECH FEATURE)
+   CREATE TRANSACTION (STARTUP FINTECH LOGIC)
 ============================== */
 router.post("/", protect, async (req, res) => {
   try {
@@ -30,6 +31,39 @@ router.post("/", protect, async (req, res) => {
       return res.status(400).json({ message: "Missing fields" });
     }
 
+    // ✅ GET OR CREATE WALLET
+    let wallet = await Wallet.findOne({ user: req.user.id });
+
+    if (!wallet) {
+      wallet = await Wallet.create({
+        user: req.user.id,
+        balance: 0,
+      });
+    }
+
+    let newBalance = wallet.balance;
+
+    // 💰 FINTECH RULES
+    if (type === "deposit" || type === "profit") {
+      newBalance += Number(amount);
+    }
+
+    if (type === "withdrawal") {
+      newBalance -= Number(amount);
+    }
+
+    // ❌ BLOCK NEGATIVE BALANCE (VERY IMPORTANT FOR INVESTORS)
+    if (newBalance < 0) {
+      return res.status(400).json({
+        message: "Insufficient wallet balance",
+      });
+    }
+
+    // ✅ SAVE WALLET FIRST
+    wallet.balance = newBalance;
+    await wallet.save();
+
+    // ✅ SAVE TRANSACTION
     const newTransaction = await Transaction.create({
       user: req.user.id,
       type,
@@ -38,7 +72,10 @@ router.post("/", protect, async (req, res) => {
       status: "completed",
     });
 
-    res.json(newTransaction);
+    res.json({
+      transaction: newTransaction,
+      walletBalance: wallet.balance,
+    });
   } catch (err) {
     res.status(500).json({ message: "Create error" });
   }
@@ -67,7 +104,7 @@ router.delete("/:id", protect, async (req, res) => {
 });
 
 /* ==============================
-   SEED 
+   SEED (DEV ONLY)
 ============================== */
 router.post("/seed", protect, async (req, res) => {
   try {

@@ -5,12 +5,21 @@ const User = require("../models/User");
 
 const router = express.Router();
 
-// REGISTER
+/* ==============================
+   REGISTER
+============================== */
 router.post("/register", async (req, res) => {
   try {
     const { name, email, password } = req.body;
 
-    // Check user
+    /* VALIDATION */
+    if (!name || !email || !password) {
+      return res.status(400).json({
+        message: "Please fill all fields",
+      });
+    }
+
+    /* CHECK USER */
     const existingUser = await User.findOne({ email });
 
     if (existingUser) {
@@ -19,21 +28,27 @@ router.post("/register", async (req, res) => {
       });
     }
 
-    // Hash password
+    /* HASH PASSWORD */
     const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(password, salt);
 
-    // Create user
+    const hashedPassword = await bcrypt.hash(
+      password,
+      salt
+    );
+
+    /* CREATE USER */
     const user = await User.create({
       name,
       email,
       password: hashedPassword,
     });
 
-    // Create token
+    /* TOKEN */
     const token = jwt.sign(
       {
         id: user._id,
+        name: user.name,
+        email: user.email,
       },
       process.env.JWT_SECRET,
       {
@@ -41,6 +56,7 @@ router.post("/register", async (req, res) => {
       }
     );
 
+    /* RESPONSE */
     res.status(201).json({
       token,
       user: {
@@ -50,19 +66,29 @@ router.post("/register", async (req, res) => {
       },
     });
   } catch (error) {
-    console.log(error);
+    console.log("REGISTER ERROR:", error);
+
     res.status(500).json({
       message: "Server error",
     });
   }
 });
 
-// LOGIN
+/* ==============================
+   LOGIN
+============================== */
 router.post("/login", async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    // Check email
+    /* VALIDATION */
+    if (!email || !password) {
+      return res.status(400).json({
+        message: "Please enter email and password",
+      });
+    }
+
+    /* FIND USER */
     const user = await User.findOne({ email });
 
     if (!user) {
@@ -71,8 +97,11 @@ router.post("/login", async (req, res) => {
       });
     }
 
-    // Check password
-    const isMatch = await bcrypt.compare(password, user.password);
+    /* CHECK PASSWORD */
+    const isMatch = await bcrypt.compare(
+      password,
+      user.password
+    );
 
     if (!isMatch) {
       return res.status(400).json({
@@ -80,10 +109,12 @@ router.post("/login", async (req, res) => {
       });
     }
 
-    // Generate token
+    /* GENERATE TOKEN */
     const token = jwt.sign(
       {
         id: user._id,
+        name: user.name,
+        email: user.email,
       },
       process.env.JWT_SECRET,
       {
@@ -91,6 +122,7 @@ router.post("/login", async (req, res) => {
       }
     );
 
+    /* SUCCESS RESPONSE */
     res.json({
       token,
       user: {
@@ -100,7 +132,8 @@ router.post("/login", async (req, res) => {
       },
     });
   } catch (error) {
-    console.log(error);
+    console.log("LOGIN ERROR:", error);
+
     res.status(500).json({
       message: "Server error",
     });
