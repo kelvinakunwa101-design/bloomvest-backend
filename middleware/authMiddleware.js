@@ -5,13 +5,22 @@ const protect = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
 
-    if (!authHeader?.startsWith("Bearer ")) {
+    console.log("AUTH HEADER:", authHeader); // DEBUG (keep for now)
+
+    if (!authHeader) {
       return res.status(401).json({
         message: "Not authorized, no token",
       });
     }
 
-    const token = authHeader.split(" ")[1];
+    // More flexible parsing (handles extra spaces safely)
+    const token = authHeader.split(" ")[1]?.trim();
+
+    if (!token) {
+      return res.status(401).json({
+        message: "Not authorized, no token",
+      });
+    }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
@@ -24,9 +33,11 @@ const protect = async (req, res, next) => {
     }
 
     req.user = user;
-
     next();
+
   } catch (error) {
+    console.log("AUTH ERROR:", error.message);
+
     return res.status(401).json({
       message: "Token failed",
     });
