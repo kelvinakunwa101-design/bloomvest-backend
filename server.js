@@ -9,11 +9,23 @@ const rateLimit = require("express-rate-limit");
 dotenv.config();
 
 const app = express();
+const allowedOrigins = [
+  "https://bloomvest-frontend-ten.vercel.app",
+  "https://bloomvest-frontend-9tgp19mni-kelvin-akunwas-projects.vercel.app"
+];
 
-/* ---------------- SECURITY MIDDLEWARE ---------------- */
 app.use(
   cors({
-    origin: process.env.CLIENT_URL || "https://bloomvest-frontend-ten.vercel.app",
+    origin: function (origin, callback) {
+      
+      if (!origin) return callback(null, true);
+
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      return callback(new Error("Not allowed by CORS"));
+    },
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
