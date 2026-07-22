@@ -10,6 +10,7 @@ dotenv.config();
 
 const app = express();
 const allowedOrigins = [
+  "http://localhost:3000",
   "https://bloomvest-frontend-ten.vercel.app",
   "https://bloomvest-frontend-9tgp19mni-kelvin-akunwas-projects.vercel.app"
 ];
@@ -31,6 +32,7 @@ app.use(
     allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
+app.options("*", cors());
 
 // IMPORTANT: handle preflight requests //
 
