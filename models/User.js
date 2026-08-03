@@ -2,25 +2,118 @@ const mongoose = require("mongoose");
 
 const userSchema = new mongoose.Schema(
   {
+    // ==========================
+    // BASIC DETAILS
+    // ==========================
+
     name: {
       type: String,
       required: true,
     },
+
     email: {
       type: String,
       required: true,
       unique: true,
     },
+
     password: {
       type: String,
       required: true,
     },
+
+    phone: {
+      type: String,
+      unique: true,
+      sparse: true,
+    },
+
+    accountNumber: {
+      type: String,
+      unique: true,
+      sparse: true,
+    },
+
+    investorId: {
+      type: String,
+      unique: true,
+      sparse: true,
+    },
+
+    // ==========================
+    // FINTECH
+    // ==========================
+
     balance: {
       type: Number,
       default: 0,
     },
+
+    investorTier: {
+      type: String,
+      enum: ["Bronze", "Silver", "Gold", "Platinum"],
+      default: "Bronze",
+    },
+
+    kycStatus: {
+      type: String,
+      enum: ["Pending", "Verified", "Rejected"],
+      default: "Pending",
+    },
+
+    // ==========================
+    // PROFILE
+    // ==========================
+
+    avatar: {
+      type: String,
+      default: "",
+    },
+
+    gender: String,
+
+    occupation: String,
+
+    address: String,
+
+    city: String,
+
+    state: String,
+
+    country: {
+      type: String,
+      default: "Nigeria",
+    },
+
+    dateOfBirth: Date,
+
+    // ==========================
+    // SETTINGS
+    // ==========================
+
+    emailNotifications: {
+      type: Boolean,
+      default: true,
+    },
+
+    smsNotifications: {
+      type: Boolean,
+      default: false,
+    },
+
+    twoFactor: {
+      type: Boolean,
+      default: false,
+    },
+
+    darkMode: {
+      type: Boolean,
+      default: false,
+    },
   },
-  { timestamps: true }
+  {
+    timestamps: true,
+  }
 );
 
 module.exports = mongoose.model("User", userSchema);

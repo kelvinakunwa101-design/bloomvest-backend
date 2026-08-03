@@ -3,6 +3,22 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const User = require("../models/User");
 
+const generateAccountNumber = () => {
+  return Math.floor(
+    1000000000 + Math.random() * 9000000000
+  ).toString();
+};
+
+const generateBloomVestId = () => {
+  return (
+    "BV-" +
+    Math.random()
+      .toString(36)
+      .substring(2, 8)
+      .toUpperCase()
+  );
+};
+
 const router = express.Router();
 
 /* ==============================
@@ -38,10 +54,16 @@ router.post("/register", async (req, res) => {
 
     /* CREATE USER */
     const user = await User.create({
-      name,
-      email,
-      password: hashedPassword,
-    });
+  name,
+  email,
+  password: hashedPassword,
+
+  accountNumber: generateAccountNumber(),
+  investorId: generateBloomVestId(),
+
+  investorTier: "Silver",
+  kycStatus: "Pending",
+});
 
     /* TOKEN */
     const token = jwt.sign(
@@ -60,10 +82,14 @@ router.post("/register", async (req, res) => {
     res.status(201).json({
       token,
       user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-      },
+  id: user._id,
+  name: user.name,
+  email: user.email,
+  accountNumber: user.accountNumber,
+  investorId: user.investorId,
+  investorTier: user.investorTier,
+  kycStatus: user.kycStatus,
+},
     });
   } catch (error) {
     console.log("REGISTER ERROR:", error);
@@ -126,10 +152,14 @@ router.post("/login", async (req, res) => {
     res.json({
       token,
       user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-      },
+  id: user._id,
+  name: user.name,
+  email: user.email,
+  accountNumber: user.accountNumber,
+  investorId: user.investorId,
+  investorTier: user.investorTier,
+  kycStatus: user.kycStatus,
+},
     });
   } catch (error) {
     console.log("LOGIN ERROR:", error);

@@ -10,7 +10,13 @@ const transactionSchema = new mongoose.Schema(
 
     type: {
       type: String,
-      enum: ["deposit", "withdrawal", "investment", "profit"],
+      enum: [
+        "deposit",
+        "withdrawal",
+        "investment",
+        "profit",
+        "utility",
+      ],
       required: true,
     },
 
@@ -29,8 +35,15 @@ const transactionSchema = new mongoose.Schema(
       type: String,
       default: "",
     },
+
+    reference: {
+      type: String,
+    },
   },
   { timestamps: true }
 );
 
-module.exports = mongoose.model("Transaction", transactionSchema);
+module.exports = mongoose.model(
+  "Transaction",
+  transactionSchema
+);

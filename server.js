@@ -53,14 +53,19 @@ app.use(limiter);
 
 /* ---------------- ROUTES ---------------- */
 
+const userRoutes = require("./routes/userRoutes");
 const authRoutes = require("./routes/auth");
 const transactionRoutes = require("./routes/transactions");
 const investmentRoutes = require("./routes/investment");
+const investmentPlanRoutes = require("./routes/investmentPlanRoutes");
 const walletRoutes = require("./routes/wallet");
+const processMaturedInvestments = require("./services/processMaturedInvestments");
 
+app.use("/api/users", userRoutes)
 app.use("/api/auth", authRoutes);
 app.use("/api/transactions", transactionRoutes);
 app.use("/api/investments", investmentRoutes);
+app.use("/api/investments/plans", investmentPlanRoutes);
 app.use("/api/wallet", walletRoutes);
 
 /* ---------------- HEALTH ---------------- */
@@ -97,7 +102,23 @@ app.use((err, req, res, next) => {
 
 mongoose
   .connect(process.env.MONGO_URI)
-  .then(() => console.log("✅ MongoDB Connected"))
+  .then(() => {
+    console.log("✅ MongoDB Connected");
+
+    setInterval(async () => {
+      try {
+        const processed = await processMaturedInvestments();
+
+        if (processed > 0) {
+          console.log(
+            `✅ Processed ${processed} matured investment(s)`
+          );
+        }
+      } catch (err) {
+        console.error("Investment processor error:", err);
+      }
+    }, 60000); // Runs every 60 seconds
+  })
   .catch((err) => {
     console.error(err);
     process.exit(1);

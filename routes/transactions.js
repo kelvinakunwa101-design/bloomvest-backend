@@ -1,6 +1,8 @@
 const express = require("express");
 const router = express.Router();
 
+console.log("✅ Transactions route loaded");
+
 const protect = require("../middleware/authMiddleware");
 const Transaction = require("../models/Transaction");
 const Wallet = require("../models/Wallet"); // ✅ NEW IMPORT
@@ -23,12 +25,19 @@ router.get("/", protect, async (req, res) => {
 /* ==============================
    CREATE TRANSACTION (STARTUP FINTECH LOGIC)
 ============================== */
+/* ==============================
+   CREATE TRANSACTION (STARTUP FINTECH LOGIC)
+============================== */
 router.post("/", protect, async (req, res) => {
+  console.log("✅ POST /api/transactions reached");
+
   try {
     const { type, amount, description } = req.body;
 
     if (!type || !amount) {
-      return res.status(400).json({ message: "Missing fields" });
+      return res.status(400).json({
+        message: "Missing fields",
+      });
     }
 
     // ✅ GET OR CREATE WALLET
@@ -48,9 +57,9 @@ router.post("/", protect, async (req, res) => {
       newBalance += Number(amount);
     }
 
-    if (type === "withdrawal") {
-      newBalance -= Number(amount);
-    }
+    if (type === "withdrawal" || type === "utility") {
+        newBalance -= Number(amount);
+   }
 
     // ❌ BLOCK NEGATIVE BALANCE (VERY IMPORTANT FOR INVESTORS)
     if (newBalance < 0) {
@@ -64,21 +73,33 @@ router.post("/", protect, async (req, res) => {
     await wallet.save();
 
     // ✅ SAVE TRANSACTION
+    console.log("Creating transaction...");
+
     const newTransaction = await Transaction.create({
-      user: req.user.id,
-      type,
-      amount,
-      description: description || "",
-      status: "completed",
-    });
+  user: req.user.id,
+  type,
+  amount,
+  description: description || "",
+  status: "completed",
+  reference:
+    "BLM" +
+    Date.now() +
+    Math.floor(Math.random() * 10000),
+});
+
+console.log("Transaction created:", newTransaction);
 
     res.json({
       transaction: newTransaction,
       walletBalance: wallet.balance,
     });
   } catch (err) {
-    res.status(500).json({ message: "Create error" });
-  }
+  console.error("TRANSACTION ERROR:", err);
+
+  res.status(500).json({
+    message: err.message,
+  });
+}
 });
 
 /* ==============================
