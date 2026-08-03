@@ -32,7 +32,14 @@ router.post("/", protect, async (req, res) => {
   console.log("✅ POST /api/transactions reached");
 
   try {
-    const { type, amount, description } = req.body;
+    const {
+  type,
+  amount,
+  description,
+  bank,
+  accountNumber,
+  accountName,
+} = req.body;
 
     if (!type || !amount) {
       return res.status(400).json({
@@ -80,7 +87,16 @@ router.post("/", protect, async (req, res) => {
   type,
   amount,
   description: description || "",
-  status: "completed",
+
+  bank: bank || "",
+  accountNumber: accountNumber || "",
+  accountName: accountName || "",
+
+  status:
+    type === "withdrawal"
+      ? "pending"
+      : "completed",
+
   reference:
     "BLM" +
     Date.now() +
@@ -142,7 +158,7 @@ router.post("/seed", protect, async (req, res) => {
         type: "withdrawal",
         amount: 200,
         description: "Seed withdrawal",
-        status: "completed",
+        status: "pending",
       },
       {
         user: req.user.id,

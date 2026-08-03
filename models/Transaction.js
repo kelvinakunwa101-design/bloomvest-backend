@@ -36,6 +36,21 @@ const transactionSchema = new mongoose.Schema(
       default: "",
     },
 
+    bank: {
+  type: String,
+  default: "",
+},
+
+accountNumber: {
+  type: String,
+  default: "",
+},
+
+accountName: {
+  type: String,
+  default: "",
+},
+
     reference: {
       type: String,
     },

@@ -2,7 +2,9 @@ const express = require("express");
 const router = express.Router();
 
 const bcrypt = require("bcryptjs");
+const path = require("path");
 const protect = require("../middleware/authMiddleware");
+const upload = require("../middleware/upload");
 const User = require("../models/User");
 
 /* ==============================
@@ -80,6 +82,46 @@ router.put("/profile", protect, async (req, res) => {
   }
 });
 
+/* ==============================
+   UPLOAD AVATAR
+============================== */
+router.post(
+  "/avatar",
+  protect,
+  upload.single("avatar"),
+  async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({
+          message: "No image uploaded",
+        });
+      }
+
+      const user = await User.findById(req.user.id);
+
+      if (!user) {
+        return res.status(404).json({
+          message: "User not found",
+        });
+      }
+
+      user.avatar = `/uploads/${req.file.filename}`;
+
+      await user.save();
+
+      res.json({
+        message: "Avatar uploaded successfully",
+        avatar: user.avatar,
+      });
+    } catch (err) {
+      console.error(err);
+
+      res.status(500).json({
+        message: "Upload failed",
+      });
+    }
+  }
+);
 /* ==============================
    CHANGE PASSWORD
 ============================== */

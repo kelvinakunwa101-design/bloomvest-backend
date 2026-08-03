@@ -1,7 +1,8 @@
 const express = require("express");
 const router = express.Router();
-
+const upload = require("../services/upload");
 const protect = require("../middleware/authMiddleware");
+
 const User = require("../models/User");
 
 /* ==========================
@@ -57,5 +58,41 @@ router.put("/me", protect, async (req, res) => {
     });
   }
 });
+
+/* ==============================
+   UPLOAD PROFILE PHOTO
+============================== */
+
+router.post(
+  "/avatar",
+  protect,
+  upload.single("avatar"),
+  async (req, res) => {
+    try {
+      const user = await User.findById(req.user.id);
+
+      if (!user) {
+        return res.status(404).json({
+          message: "User not found",
+        });
+      }
+
+      user.avatar = `/uploads/avatars/${req.file.filename}`;
+
+      await user.save();
+
+      res.json({
+        message: "Avatar uploaded successfully",
+        avatar: user.avatar,
+      });
+    } catch (err) {
+      console.error(err);
+
+      res.status(500).json({
+        message: err.message,
+      });
+    }
+  }
+);
 
 module.exports = router;

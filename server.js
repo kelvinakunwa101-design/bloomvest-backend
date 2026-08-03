@@ -1,3 +1,4 @@
+const path = require("path");
 const dotenv = require("dotenv");
 const express = require("express");
 const cors = require("cors");
@@ -36,8 +37,14 @@ app.use(
   })
 );
 
-/* ---------------- MIDDLEWARE ---------------- */
+app.use(
+  "/uploads",
+  express.static(
+    path.join(__dirname, "uploads")
+  )
+);
 
+/* ---------------- MIDDLEWARE ---------------- */
 app.use(express.json());
 app.use(helmet());
 app.use(morgan("dev"));
