@@ -56,10 +56,48 @@ const userSchema = new mongoose.Schema(
     },
 
     kycStatus: {
-      type: String,
-      enum: ["Pending", "Verified", "Rejected"],
-      default: "Pending",
-    },
+  type: String,
+  enum: ["Pending", "Verified", "Rejected"],
+  default: "Pending",
+},
+
+// ==========================
+// KYC DOCUMENTS
+// ==========================
+
+kycDocumentType: {
+  type: String,
+  enum: [
+    "National ID",
+    "Driver License",
+    "International Passport",
+    "Voter Card",
+  ],
+  default: "",
+},
+
+kycDocumentNumber: {
+  type: String,
+  default: "",
+},
+
+kycDocumentFront: {
+  type: String,
+  default: "",
+},
+
+kycDocumentBack: {
+  type: String,
+  default: "",
+},
+
+kycSubmittedAt: {
+  type: Date,
+},
+
+kycVerifiedAt: {
+  type: Date,
+},
 
     // ==========================
     // PROFILE

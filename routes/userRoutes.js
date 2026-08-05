@@ -1,5 +1,6 @@
 const express = require("express");
 const router = express.Router();
+const kycUpload = require("../services/kycUpload");
 const upload = require("../services/upload");
 const protect = require("../middleware/authMiddleware");
 
@@ -69,7 +70,11 @@ router.post(
   upload.single("avatar"),
   async (req, res) => {
     try {
-      const user = await User.findById(req.user.id);
+      console.log("========== AVATAR ROUTE ==========");
+      console.log("FILE:", req.file);
+      console.log("USER:", req.user);
+
+      const user = await User.findById(req.user._id);
 
       if (!user) {
         return res.status(404).json({
@@ -80,6 +85,8 @@ router.post(
       user.avatar = `/uploads/avatars/${req.file.filename}`;
 
       await user.save();
+
+      console.log("Saved avatar:", user.avatar);
 
       res.json({
         message: "Avatar uploaded successfully",
@@ -95,4 +102,58 @@ router.post(
   }
 );
 
+  /* ==============================
+   UPLOAD KYC DOCUMENTS
+============================== */
+
+router.post(
+  "/kyc",
+  protect,
+  kycUpload.fields([
+    { name: "front", maxCount: 1 },
+    { name: "back", maxCount: 1 },
+  ]),
+  async (req, res) => {
+    try {
+      const user = await User.findById(req.user._id);
+
+      if (!user) {
+        return res.status(404).json({
+          message: "User not found",
+        });
+      }
+
+      const { documentType, documentNumber } = req.body;
+
+      user.kycDocumentType = documentType;
+      user.kycDocumentNumber = documentNumber;
+
+      if (req.files.front) {
+        user.kycDocumentFront =
+          "/uploads/kyc/" + req.files.front[0].filename;
+      }
+
+      if (req.files.back) {
+        user.kycDocumentBack =
+          "/uploads/kyc/" + req.files.back[0].filename;
+      }
+
+      user.kycStatus = "Pending";
+      user.kycSubmittedAt = new Date();
+
+      await user.save();
+
+      res.json({
+        message: "KYC submitted successfully.",
+        user,
+      });
+    } catch (err) {
+      console.error(err);
+
+      res.status(500).json({
+        message: err.message,
+      });
+    }
+  }
+);
 module.exports = router;
