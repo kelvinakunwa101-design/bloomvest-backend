@@ -7,30 +7,57 @@ const storage = multer.diskStorage({
   },
 
   filename(req, file, cb) {
+    const extension = path.extname(file.originalname).toLowerCase();
+
     cb(
       null,
-      Date.now() +
-        "-" +
-        Math.round(Math.random() * 1000000) +
-        path.extname(file.originalname)
+      `${Date.now()}-${Math.round(
+        Math.random() * 1000000
+      )}${extension}`
     );
   },
 });
 
+const allowedMimeTypes = [
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+];
+
+const allowedExtensions = [
+  ".jpg",
+  ".jpeg",
+  ".png",
+  ".webp",
+];
+
 const fileFilter = (req, file, cb) => {
+  const extension = path
+    .extname(file.originalname)
+    .toLowerCase();
+
   if (
-    file.mimetype === "image/jpeg" ||
-    file.mimetype === "image/png" ||
-    file.mimetype === "image/jpg" ||
-    file.mimetype === "image/webp"
+    allowedMimeTypes.includes(file.mimetype) &&
+    allowedExtensions.includes(extension)
   ) {
-    cb(null, true);
-  } else {
-    cb(new Error("Only image files are allowed."));
+    return cb(null, true);
   }
+
+  return cb(
+    new Error(
+      "Only JPG, JPEG, PNG, and WebP image files are allowed."
+    )
+  );
 };
 
-module.exports = multer({
+const kycUpload = multer({
   storage,
   fileFilter,
+
+  limits: {
+    fileSize: 5 * 1024 * 1024,
+    files: 2,
+  },
 });
+
+module.exports = kycUpload;

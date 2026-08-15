@@ -2,66 +2,84 @@ const mongoose = require("mongoose");
 
 const investmentSchema = new mongoose.Schema(
   {
-  user: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "User",
-    required: true,
-  },
+    user: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
 
-  amount: {
-    type: Number,
-    required: true,
-  },
+    amount: {
+      type: Number,
+      required: true,
+    },
 
-  plan: {
-    type: String,
-    required: true,
-  },
+    plan: {
+      type: String,
+      required: true,
+    },
 
-  profitRate: {
-    type: Number,
-    default: 0.05,
-  },
+    profitRate: {
+      type: Number,
+      required: true,
+    },
 
-  duration: {
-    type: Number,
-    default: 30,
-  },
+    duration: {
+      type: Number,
+      required: true,
+    },
 
-  expectedProfit: {
-    type: Number,
-    default: 0,
-  },
+    expectedProfit: {
+      type: Number,
+      default: 0,
+    },
 
-  currentValue: {
-    type: Number,
-    default: 0,
-  },
+    currentValue: {
+      type: Number,
+      default: 0,
+    },
 
-  status: {
-    type: String,
-    enum: ["active", "completed", "cancelled"],
-    default: "active",
-  },
+    status: {
+      type: String,
+      enum: ["active", "completed", "cancelled"],
+      default: "active",
+    },
 
-  maturityDate: {
-    type: Date,
+    maturityDate: {
+      type: Date,
+    },
   },
-},
-  { timestamps: true } 
-  ); 
-  investmentSchema.pre("save", function (next) {
-  if (!this.isModified("amount") && !this.isModified("profitRate") && !this.isNew) {
-    return next();
+  {
+    timestamps: true,
   }
-  this.expectedProfit = this.amount * this.profitRate;
+);
 
-  this.currentValue = this.amount + this.expectedProfit;
+investmentSchema.pre("save", function () {
+if (
+!this.isNew &&
+!this.isModified("amount") &&
+!this.isModified("profitRate")
+) {
+return;
+}
 
-  this.maturityDate = new Date(
-    Date.now() + this.duration * 24 * 60 * 60 * 1000
-  );
+this.expectedProfit =
+this.amount * this.profitRate;
 
-  next();
+this.currentValue =
+this.amount + this.expectedProfit;
+
+this.maturityDate = new Date(
+Date.now() +
+this.duration *
+24 *
+60 *
+60 *
+1000
+);
 });
-module.exports = mongoose.model("Investment", investmentSchema);
+
+
+module.exports = mongoose.model(
+  "Investment",
+  investmentSchema
+);

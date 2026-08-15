@@ -5,19 +5,13 @@ const protect = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
 
-    console.log("AUTH HEADER:", authHeader); // DEBUG (keep for now)
-    
-
-    if (!authHeader) {
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
       return res.status(401).json({
-        message: "Not authorized, no token",
+        message: "Not authorized, no valid token",
       });
     }
 
-    // More flexible parsing (handles extra spaces safely)
-    const token = authHeader.split(" ")[1]?.trim();
-
-    console.log("TOKEN:", token);
+    const token = authHeader.substring(7).trim();
 
     if (!token) {
       return res.status(401).json({
@@ -27,8 +21,11 @@ const protect = async (req, res, next) => {
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-
-    console.log("DECODED:", decoded);
+    if (!decoded?.id) {
+      return res.status(401).json({
+        message: "Invalid authentication token",
+      });
+    }
 
     const user = await User.findById(decoded.id).select("-password");
 
@@ -39,13 +36,25 @@ const protect = async (req, res, next) => {
     }
 
     req.user = user;
-    next();
 
+    next();
   } catch (error) {
-    console.log("AUTH ERROR:", error.message);
+    if (error.name === "TokenExpiredError") {
+      return res.status(401).json({
+        message: "Authentication token expired",
+      });
+    }
+
+    if (error.name === "JsonWebTokenError") {
+      return res.status(401).json({
+        message: "Invalid authentication token",
+      });
+    }
+
+    console.error("AUTHENTICATION ERROR:", error.message);
 
     return res.status(401).json({
-      message: "Token failed",
+      message: "Authentication failed",
     });
   }
 };

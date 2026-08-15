@@ -1,13 +1,52 @@
 const express = require("express");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const mongoose = require("mongoose");
 const User = require("../models/User");
+const {
+  generateSecret,
+  generateURI,
+  verify,
+} = require("otplib");
+
+const protect = require("../middleware/authMiddleware");
+
+const router = express.Router();
+
+/* =========================================================
+   SECURITY CONFIG
+========================================================= */
+
+const JWT_EXPIRES_IN = "7d";
+const TWO_FACTOR_CHALLENGE_EXPIRES_IN = "5m";
+
+const ACCESS_TOKEN_TYPE = "access";
+const TWO_FACTOR_CHALLENGE_TYPE = "2fa-challenge";
+const TWO_FACTOR_PURPOSE = "2fa-login";
+
+/* =========================================================
+   HELPERS
+========================================================= */
+
+const validateJWTSecret = () => {
+  if (!process.env.JWT_SECRET) {
+    throw new Error("JWT_SECRET is not configured");
+  }
+};
+
+/* =========================================================
+   ACCOUNT NUMBER
+========================================================= */
 
 const generateAccountNumber = () => {
   return Math.floor(
     1000000000 + Math.random() * 9000000000
   ).toString();
 };
+
+/* =========================================================
+   BLOOMVEST ID
+========================================================= */
 
 const generateBloomVestId = () => {
   return (
@@ -19,24 +58,78 @@ const generateBloomVestId = () => {
   );
 };
 
-const router = express.Router();
+/* =========================================================
+   USER RESPONSE
+========================================================= */
 
-/* ==============================
+const buildUserResponse = (user) => ({
+  id: user._id,
+  name: user.name,
+  email: user.email,
+  role: user.role,
+  accountNumber: user.accountNumber,
+  investorId: user.investorId,
+  investorTier: user.investorTier,
+  kycStatus: user.kycStatus,
+  twoFactor: user.twoFactor,
+  twoFactorVerified: user.twoFactorVerified,
+});
+
+/* =========================================================
    REGISTER
-============================== */
+========================================================= */
+
 router.post("/register", async (req, res) => {
   try {
-    const { name, email, password } = req.body;
+    validateJWTSecret();
 
-    /* VALIDATION */
+    const {
+      name,
+      email,
+      password,
+    } = req.body;
+
+    /* ==============================
+       VALIDATION
+    ============================== */
+
     if (!name || !email || !password) {
       return res.status(400).json({
         message: "Please fill all fields",
       });
     }
 
-    /* CHECK USER */
-    const existingUser = await User.findOne({ email });
+    const cleanName = String(name).trim();
+    const cleanEmail = String(email)
+      .trim()
+      .toLowerCase();
+
+    if (cleanName.length < 2) {
+      return res.status(400).json({
+        message: "Please enter a valid name",
+      });
+    }
+
+    if (cleanEmail.length > 254) {
+      return res.status(400).json({
+        message: "Please enter a valid email address",
+      });
+    }
+
+    if (String(password).length < 8) {
+      return res.status(400).json({
+        message:
+          "Password must be at least 8 characters",
+      });
+    }
+
+    /* ==============================
+       CHECK EMAIL
+    ============================== */
+
+    const existingUser = await User.findOne({
+      email: cleanEmail,
+    });
 
     if (existingUser) {
       return res.status(400).json({
@@ -44,7 +137,10 @@ router.post("/register", async (req, res) => {
       });
     }
 
-    /* HASH PASSWORD */
+    /* ==============================
+       HASH PASSWORD
+    ============================== */
+
     const salt = await bcrypt.genSalt(10);
 
     const hashedPassword = await bcrypt.hash(
@@ -52,122 +148,555 @@ router.post("/register", async (req, res) => {
       salt
     );
 
-    /* CREATE USER */
+    /* ==============================
+       CREATE USER
+    ============================== */
+
     const user = await User.create({
-  name,
-  email,
-  password: hashedPassword,
+      name: cleanName,
+      email: cleanEmail,
+      password: hashedPassword,
 
-  accountNumber: generateAccountNumber(),
-  investorId: generateBloomVestId(),
+      accountNumber: generateAccountNumber(),
+      investorId: generateBloomVestId(),
 
-  investorTier: "Silver",
-  kycStatus: "Pending",
-});
+      investorTier: "Silver",
+      kycStatus: "Pending",
+      role: "user",
+    });
 
-    /* TOKEN */
+    /* ==============================
+       GENERATE ACCESS TOKEN
+    ============================== */
+
     const token = jwt.sign(
       {
-        id: user._id,
-        name: user.name,
-        email: user.email,
+        id: user._id.toString(),
+        role: user.role,
+        type: ACCESS_TOKEN_TYPE,
       },
       process.env.JWT_SECRET,
       {
-        expiresIn: "7d",
+        expiresIn: JWT_EXPIRES_IN,
       }
     );
 
-    /* RESPONSE */
-    res.status(201).json({
+    /* ==============================
+       RESPONSE
+    ============================== */
+
+    return res.status(201).json({
       token,
-      user: {
-  id: user._id,
-  name: user.name,
-  email: user.email,
-  accountNumber: user.accountNumber,
-  investorId: user.investorId,
-  investorTier: user.investorTier,
-  kycStatus: user.kycStatus,
-},
+      user: buildUserResponse(user),
     });
   } catch (error) {
-    console.log("REGISTER ERROR:", error);
+    console.error(
+      "REGISTER ERROR:",
+      error.message
+    );
 
-    res.status(500).json({
-      message: "Server error",
+    return res.status(500).json({
+      message: "Registration failed",
     });
   }
 });
 
-/* ==============================
+/* =========================================================
    LOGIN
-============================== */
+========================================================= */
+
 router.post("/login", async (req, res) => {
   try {
-    const { email, password } = req.body;
+    validateJWTSecret();
 
-    /* VALIDATION */
+    const {
+      email,
+      password,
+    } = req.body;
+
+    /* ==============================
+       VALIDATION
+    ============================== */
+
     if (!email || !password) {
       return res.status(400).json({
-        message: "Please enter email and password",
+        message:
+          "Please enter email and password",
       });
     }
 
-    /* FIND USER */
-    const user = await User.findOne({ email });
+    const cleanEmail = String(email)
+      .trim()
+      .toLowerCase();
+
+    /* ==============================
+       FIND USER
+    ============================== */
+
+    const user = await User.findOne({
+      email: cleanEmail,
+    });
 
     if (!user) {
-      return res.status(400).json({
+      return res.status(401).json({
         message: "Invalid credentials",
       });
     }
 
-    /* CHECK PASSWORD */
+    /* ==============================
+       CHECK PASSWORD
+    ============================== */
+
     const isMatch = await bcrypt.compare(
       password,
       user.password
     );
 
     if (!isMatch) {
-      return res.status(400).json({
+      return res.status(401).json({
         message: "Invalid credentials",
       });
     }
 
-    /* GENERATE TOKEN */
+    /* =====================================================
+       2FA LOGIN CHALLENGE
+    ===================================================== */
+
+    if (
+      user.twoFactor === true &&
+      user.twoFactorVerified === true
+    ) {
+      const twoFactorChallenge = jwt.sign(
+        {
+          id: user._id.toString(),
+
+          type: TWO_FACTOR_CHALLENGE_TYPE,
+
+          purpose: TWO_FACTOR_PURPOSE,
+        },
+        process.env.JWT_SECRET,
+        {
+          expiresIn:
+            TWO_FACTOR_CHALLENGE_EXPIRES_IN,
+        }
+      );
+
+      return res.json({
+        requiresTwoFactor: true,
+        twoFactorChallenge,
+
+        message:
+          "Two-factor authentication required",
+      });
+    }
+
+    /* =====================================================
+       NORMAL ACCESS TOKEN
+    ===================================================== */
+
     const token = jwt.sign(
       {
-        id: user._id,
-        name: user.name,
-        email: user.email,
+        id: user._id.toString(),
+        role: user.role,
+        type: ACCESS_TOKEN_TYPE,
       },
       process.env.JWT_SECRET,
       {
-        expiresIn: "7d",
+        expiresIn: JWT_EXPIRES_IN,
       }
     );
 
-    /* SUCCESS RESPONSE */
-    res.json({
+    /* ==============================
+       SUCCESS RESPONSE
+    ============================== */
+
+    return res.json({
       token,
-      user: {
-  id: user._id,
-  name: user.name,
-  email: user.email,
-  accountNumber: user.accountNumber,
-  investorId: user.investorId,
-  investorTier: user.investorTier,
-  kycStatus: user.kycStatus,
-},
+      user: buildUserResponse(user),
     });
   } catch (error) {
-    console.log("LOGIN ERROR:", error);
+    console.error(
+      "LOGIN ERROR:",
+      error.message
+    );
 
-    res.status(500).json({
-      message: "Server error",
+    return res.status(500).json({
+      message: "Login failed",
     });
   }
 });
 
+/* =========================================================
+   2FA SETUP
+========================================================= */
+
+router.post(
+  "/2fa/setup",
+  protect,
+  async (req, res) => {
+    try {
+      const user = await User.findById(
+        req.user._id
+      );
+
+      if (!user) {
+        return res.status(404).json({
+          message: "User not found",
+        });
+      }
+
+      /* Already active */
+
+      if (
+        user.twoFactor === true &&
+        user.twoFactorVerified === true
+      ) {
+        return res.status(400).json({
+          message:
+            "Two-factor authentication is already enabled",
+        });
+      }
+
+      /* Generate new Base32 secret */
+
+      const secret = generateSecret();
+
+      /*
+       * Store the secret temporarily.
+       * 2FA only becomes active after confirmation.
+       */
+
+      user.twoFactorSecret = secret;
+      user.twoFactorVerified = false;
+
+      await user.save();
+
+      /* Generate authenticator URI */
+
+      const uri = generateURI({
+        issuer: "BloomVest",
+        label: user.email,
+        secret,
+      });
+
+      return res.json({
+        message: "2FA setup initiated",
+        secret,
+        uri,
+      });
+    } catch (error) {
+      console.error(
+        "2FA SETUP ERROR:",
+        error.message
+      );
+
+      return res.status(500).json({
+        message:
+          "Failed to setup two-factor authentication",
+      });
+    }
+  }
+);
+
+/* =========================================================
+   2FA SETUP CONFIRM
+========================================================= */
+
+router.post(
+  "/2fa/setup/confirm",
+  protect,
+  async (req, res) => {
+    try {
+      const { token } = req.body;
+
+      /* ==============================
+         VALIDATION
+      ============================== */
+
+      if (!token) {
+        return res.status(400).json({
+          message:
+            "Verification code is required",
+        });
+      }
+
+      const verificationToken =
+        String(token).trim();
+
+      if (!/^\d{6}$/.test(verificationToken)) {
+        return res.status(400).json({
+          message:
+            "Verification code must be 6 digits",
+        });
+      }
+
+      /* ==============================
+         FIND USER
+      ============================== */
+
+      const user = await User.findById(
+        req.user._id
+      );
+
+      if (!user) {
+        return res.status(404).json({
+          message: "User not found",
+        });
+      }
+
+      if (!user.twoFactorSecret) {
+        return res.status(400).json({
+          message:
+            "2FA setup has not been initiated",
+        });
+      }
+
+      /* ==============================
+         VERIFY AUTHENTICATOR CODE
+      ============================== */
+
+      const result = await verify({
+        secret: user.twoFactorSecret,
+        token: verificationToken,
+      });
+
+      if (!result.valid) {
+        return res.status(401).json({
+          message:
+            "Invalid verification code",
+        });
+      }
+
+      /* ==============================
+         ACTIVATE 2FA
+      ============================== */
+
+      user.twoFactor = true;
+      user.twoFactorVerified = true;
+
+      await user.save();
+
+      return res.json({
+        message:
+          "Two-factor authentication enabled successfully",
+
+        twoFactor: user.twoFactor,
+
+        twoFactorVerified:
+          user.twoFactorVerified,
+      });
+    } catch (error) {
+      console.error(
+        "2FA SETUP CONFIRM ERROR:",
+        error.message
+      );
+
+      return res.status(500).json({
+        message:
+          "Failed to confirm two-factor authentication",
+      });
+    }
+  }
+);
+
+/* =========================================================
+   2FA LOGIN VERIFY
+========================================================= */
+
+router.post(
+  "/2fa/verify",
+  async (req, res) => {
+    try {
+      validateJWTSecret();
+
+      const {
+        twoFactorChallenge,
+        token,
+      } = req.body;
+
+      /* ==============================
+         VALIDATION
+      ============================== */
+
+      if (
+        !twoFactorChallenge ||
+        !token
+      ) {
+        return res.status(400).json({
+          message:
+            "2FA challenge and verification code are required",
+        });
+      }
+
+      const verificationToken =
+        String(token).trim();
+
+      if (!/^\d{6}$/.test(verificationToken)) {
+        return res.status(400).json({
+          message:
+            "Verification code must be 6 digits",
+        });
+      }
+
+      /* ==============================
+         VERIFY CHALLENGE JWT
+      ============================== */
+
+      let decodedChallenge;
+
+      try {
+        decodedChallenge = jwt.verify(
+          twoFactorChallenge,
+          process.env.JWT_SECRET
+        );
+      } catch (error) {
+        if (
+          error.name ===
+          "TokenExpiredError"
+        ) {
+          return res.status(401).json({
+            message:
+              "2FA session expired. Please login again.",
+          });
+        }
+
+        return res.status(401).json({
+          message:
+            "Invalid 2FA session",
+        });
+      }
+
+      /* ==============================
+         CHALLENGE TYPE VALIDATION
+      ============================== */
+
+      if (
+        decodedChallenge.type !==
+        TWO_FACTOR_CHALLENGE_TYPE
+      ) {
+        return res.status(401).json({
+          message:
+            "Invalid 2FA session",
+        });
+      }
+
+      /* ==============================
+         CHALLENGE PURPOSE VALIDATION
+      ============================== */
+
+      if (
+        decodedChallenge.purpose !==
+        TWO_FACTOR_PURPOSE
+      ) {
+        return res.status(401).json({
+          message:
+            "Invalid 2FA session",
+        });
+      }
+
+      /* ==============================
+         USER ID VALIDATION
+      ============================== */
+
+      if (
+        !decodedChallenge.id ||
+        !mongoose.Types.ObjectId.isValid(
+          decodedChallenge.id
+        )
+      ) {
+        return res.status(401).json({
+          message:
+            "Invalid verification request",
+        });
+      }
+
+      /* ==============================
+         FIND USER
+      ============================== */
+
+      const user = await User.findById(
+        decodedChallenge.id
+      );
+
+      if (!user) {
+        return res.status(401).json({
+          message:
+            "Invalid verification request",
+        });
+      }
+
+      /* ==============================
+         CONFIRM 2FA IS STILL ACTIVE
+      ============================== */
+
+      if (
+        user.twoFactor !== true ||
+        user.twoFactorVerified !== true ||
+        !user.twoFactorSecret
+      ) {
+        return res.status(400).json({
+          message:
+            "Two-factor authentication is not properly configured",
+        });
+      }
+
+      /* ==============================
+         VERIFY AUTHENTICATOR CODE
+      ============================== */
+
+      const result = await verify({
+        secret: user.twoFactorSecret,
+        token: verificationToken,
+      });
+
+      if (!result.valid) {
+        return res.status(401).json({
+          message:
+            "Invalid verification code",
+        });
+      }
+
+      /* =================================================
+         GENERATE NORMAL ACCESS JWT
+      ================================================= */
+
+      const jwtToken = jwt.sign(
+        {
+          id: user._id.toString(),
+          role: user.role,
+          type: ACCESS_TOKEN_TYPE,
+        },
+        process.env.JWT_SECRET,
+        {
+          expiresIn: JWT_EXPIRES_IN,
+        }
+      );
+
+      /* ==============================
+         SUCCESS RESPONSE
+      ============================== */
+
+      return res.json({
+        message:
+          "Two-factor authentication verified successfully",
+
+        token: jwtToken,
+
+        user: buildUserResponse(user),
+      });
+    } catch (error) {
+      console.error(
+        "2FA VERIFY ERROR:",
+        error.message
+      );
+
+      return res.status(500).json({
+        message:
+          "Two-factor verification failed",
+      });
+    }
+  }
+);
+
 module.exports = router;
+

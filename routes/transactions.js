@@ -1,181 +1,242 @@
 const express = require("express");
-const router = express.Router();
+const mongoose = require("mongoose");
 
-console.log("✅ Transactions route loaded");
+const router = express.Router();
 
 const protect = require("../middleware/authMiddleware");
 const Transaction = require("../models/Transaction");
-const Wallet = require("../models/Wallet"); // ✅ NEW IMPORT
+const Wallet = require("../models/Wallet");
+const Notification = require("../models/Notification");
 
-/* ==============================
-   GET ALL USER TRANSACTIONS
-============================== */
+const USER_TRANSACTION_TYPES = [
+  "deposit",
+  "withdrawal",
+  "utility",
+];
+
 router.get("/", protect, async (req, res) => {
   try {
     const transactions = await Transaction.find({
       user: req.user.id,
     }).sort({ createdAt: -1 });
 
-    res.json(transactions);
+    return res.json(transactions);
   } catch (err) {
-    res.status(500).json({ message: "Server error" });
+    console.error("GET TRANSACTIONS ERROR:", err);
+
+    return res.status(500).json({
+      message: "Server error",
+    });
   }
 });
 
-/* ==============================
-   CREATE TRANSACTION (STARTUP FINTECH LOGIC)
-============================== */
-/* ==============================
-   CREATE TRANSACTION (STARTUP FINTECH LOGIC)
-============================== */
-router.post("/", protect, async (req, res) => {
-  console.log("✅ POST /api/transactions reached");
 
+router.get("/:id", protect, async (req, res) => {
   try {
-    const {
-  type,
-  amount,
-  description,
-  bank,
-  accountNumber,
-  accountName,
-} = req.body;
-
-    if (!type || !amount) {
-      return res.status(400).json({
-        message: "Missing fields",
-      });
-    }
-
-    // ✅ GET OR CREATE WALLET
-    let wallet = await Wallet.findOne({ user: req.user.id });
-
-    if (!wallet) {
-      wallet = await Wallet.create({
-        user: req.user.id,
-        balance: 0,
-      });
-    }
-
-    let newBalance = wallet.balance;
-
-    // 💰 FINTECH RULES
-    if (type === "deposit" || type === "profit") {
-      newBalance += Number(amount);
-    }
-
-    if (type === "withdrawal" || type === "utility") {
-        newBalance -= Number(amount);
-   }
-
-    // ❌ BLOCK NEGATIVE BALANCE (VERY IMPORTANT FOR INVESTORS)
-    if (newBalance < 0) {
-      return res.status(400).json({
-        message: "Insufficient wallet balance",
-      });
-    }
-
-    // ✅ SAVE WALLET FIRST
-    wallet.balance = newBalance;
-    await wallet.save();
-
-    // ✅ SAVE TRANSACTION
-    console.log("Creating transaction...");
-
-    const newTransaction = await Transaction.create({
-  user: req.user.id,
-  type,
-  amount,
-  description: description || "",
-
-  bank: bank || "",
-  accountNumber: accountNumber || "",
-  accountName: accountName || "",
-
-  status:
-    type === "withdrawal"
-      ? "pending"
-      : "completed",
-
-  reference:
-    "BLM" +
-    Date.now() +
-    Math.floor(Math.random() * 10000),
-});
-
-console.log("Transaction created:", newTransaction);
-
-    res.json({
-      transaction: newTransaction,
-      walletBalance: wallet.balance,
-    });
-  } catch (err) {
-  console.error("TRANSACTION ERROR:", err);
-
-  res.status(500).json({
-    message: err.message,
-  });
-}
-});
-
-/* ==============================
-   DELETE TRANSACTION
-============================== */
-router.delete("/:id", protect, async (req, res) => {
-  try {
-    const tx = await Transaction.findOne({
+    const transaction = await Transaction.findOne({
       _id: req.params.id,
       user: req.user.id,
     });
 
-    if (!tx) {
-      return res.status(404).json({ message: "Not found" });
+    if (!transaction) {
+      return res.status(404).json({
+        message: "Transaction not found",
+      });
     }
 
-    await tx.deleteOne();
-
-    res.json({ message: "Deleted successfully" });
+    return res.json(transaction);
   } catch (err) {
-    res.status(500).json({ message: "Delete error" });
+    console.error("GET TRANSACTION BY ID ERROR:", err);
+
+    if (err instanceof mongoose.Error.CastError) {
+      return res.status(404).json({
+        message: "Transaction not found",
+      });
+    }
+
+    return res.status(500).json({
+      message: "Server error",
+    });
   }
 });
 
-/* ==============================
-   SEED (DEV ONLY)
-============================== */
-router.post("/seed", protect, async (req, res) => {
-  try {
-    const sample = await Transaction.insertMany([
-      {
-        user: req.user.id,
-        type: "deposit",
-        amount: 500,
-        description: "Seed deposit",
-        status: "completed",
-      },
-      {
-        user: req.user.id,
-        type: "withdrawal",
-        amount: 200,
-        description: "Seed withdrawal",
-        status: "pending",
-      },
-      {
-        user: req.user.id,
-        type: "profit",
-        amount: 120,
-        description: "Seed profit",
-        status: "completed",
-      },
-    ]);
 
-    res.json({
-      message: "Seeded successfully",
-      data: sample,
+router.post("/", protect, async (req, res) => {
+  const session = await mongoose.startSession();
+
+  try {
+    const {
+      type,
+      amount,
+      description,
+      bank,
+      accountNumber,
+      accountName,
+    } = req.body;
+
+    const transactionAmount = Number(amount);
+
+    if (!type) {
+      return res.status(400).json({
+        message: "Transaction type is required",
+      });
+    }
+
+    if (!USER_TRANSACTION_TYPES.includes(type)) {
+      return res.status(400).json({
+        message:
+          "Invalid transaction type. Investments and profits are handled separately.",
+      });
+    }
+
+    if (
+      !Number.isFinite(transactionAmount) ||
+      transactionAmount <= 0
+    ) {
+      return res.status(400).json({
+        message: "Enter a valid transaction amount",
+      });
+    }
+
+    let responseData;
+
+    await session.withTransaction(async () => {
+      let wallet = await Wallet.findOne({
+        user: req.user.id,
+      }).session(session);
+
+      if (!wallet) {
+        wallet = new Wallet({
+          user: req.user.id,
+          balance: 0,
+        });
+      }
+
+      let newBalance = Number(wallet.balance || 0);
+
+      if (type === "deposit") {
+        newBalance += transactionAmount;
+      }
+
+      if (type === "utility") {
+       newBalance -= transactionAmount;
+     }
+
+          if (type === "withdrawal") {
+      if (newBalance < transactionAmount) {
+      throw new Error("Insufficient wallet balance");
+     }
+   }
+
+      if (newBalance < 0) {
+        throw new Error("Insufficient wallet balance");
+      }
+
+      wallet.balance = newBalance;
+
+      await wallet.save({
+        session,
+      });
+
+      const transactions = await Transaction.create(
+        [
+          {
+            user: req.user.id,
+            type,
+            amount: transactionAmount,
+            description: description || "",
+            bank: bank || "",
+            accountNumber: accountNumber || "",
+            accountName: accountName || "",
+            status:
+              type === "withdrawal"
+                ? "pending"
+                : "completed",
+            reference:
+              "BLM" +
+              Date.now() +
+              Math.floor(Math.random() * 10000),
+          },
+        ],
+        {
+          session,
+        }
+      );
+
+      const newTransaction = transactions[0];
+
+      let notificationTitle = "";
+      let notificationMessage = "";
+
+      if (type === "deposit") {
+        notificationTitle = "Deposit Successful";
+        notificationMessage =
+          `₦${transactionAmount.toLocaleString()} ` +
+          "has been credited to your wallet.";
+      }
+
+      if (type === "withdrawal") {
+        notificationTitle = "Withdrawal Initiated";
+        notificationMessage =
+          `Your withdrawal of ₦${transactionAmount.toLocaleString()} ` +
+          "is being processed.";
+      }
+
+      if (type === "utility") {
+        notificationTitle = "Utility Payment";
+        notificationMessage =
+          `Your payment of ₦${transactionAmount.toLocaleString()} ` +
+          "was successful.";
+      }
+
+      if (notificationTitle) {
+        await Notification.create(
+          [
+            {
+              user: req.user.id,
+              title: notificationTitle,
+              message: notificationMessage,
+              type,
+            },
+          ],
+          {
+            session,
+          }
+        );
+      }
+
+      responseData = {
+        transaction: newTransaction,
+        walletBalance: wallet.balance,
+      };
+    });
+
+    return res.status(201).json({
+      message: "Transaction created successfully",
+      ...responseData,
     });
   } catch (err) {
-    res.status(500).json({ message: "Seed error" });
+    console.error("TRANSACTION ERROR:", err);
+
+    if (err.message === "Insufficient wallet balance") {
+      return res.status(400).json({
+        message: err.message,
+      });
+    }
+
+    return res.status(500).json({
+      message: err.message || "Server error",
+    });
+  } finally {
+    await session.endSession();
   }
+});
+
+router.delete("/:id", protect, async (req, res) => {
+  return res.status(403).json({
+    message: "Financial transactions cannot be deleted.",
+  });
 });
 
 module.exports = router;
+
