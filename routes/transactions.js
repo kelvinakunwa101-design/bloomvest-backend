@@ -4,6 +4,7 @@ const mongoose = require("mongoose");
 const router = express.Router();
 
 const protect = require("../middleware/authMiddleware");
+const admin = require("../middleware/adminMiddleware");
 const Transaction = require("../models/Transaction");
 const Wallet = require("../models/Wallet");
 const Notification = require("../models/Notification");
@@ -30,6 +31,52 @@ router.get("/", protect, async (req, res) => {
   }
 });
 
+router.get("/admin/all", protect, admin, async (req, res) => {
+  try {
+    const transactions = await Transaction.find()
+      .populate("user", "name email role")
+      .sort({ createdAt: -1 });
+
+    return res.json(transactions);
+  } catch (err) {
+    console.error("GET ADMIN TRANSACTIONS ERROR:", err);
+
+    return res.status(500).json({
+      message: "Server error",
+    });
+  }
+});
+
+router.get("/admin/:id", protect, admin, async (req, res) => {
+  try {
+    const transaction = await Transaction.findById(
+      req.params.id
+    ).populate("user", "name email role");
+
+    if (!transaction) {
+      return res.status(404).json({
+        message: "Transaction not found",
+      });
+    }
+
+    return res.json(transaction);
+  } catch (err) {
+    console.error(
+      "GET ADMIN TRANSACTION BY ID ERROR:",
+      err
+    );
+
+    if (err instanceof mongoose.Error.CastError) {
+      return res.status(404).json({
+        message: "Transaction not found",
+      });
+    }
+
+    return res.status(500).json({
+      message: "Server error",
+    });
+  }
+});
 
 router.get("/:id", protect, async (req, res) => {
   try {
@@ -123,10 +170,12 @@ router.post("/", protect, async (req, res) => {
      }
 
           if (type === "withdrawal") {
-      if (newBalance < transactionAmount) {
-      throw new Error("Insufficient wallet balance");
+          if (newBalance < transactionAmount) {
+    throw new Error("Insufficient wallet balance");
      }
-   }
+
+       newBalance -= transactionAmount;
+     }
 
       if (newBalance < 0) {
         throw new Error("Insufficient wallet balance");

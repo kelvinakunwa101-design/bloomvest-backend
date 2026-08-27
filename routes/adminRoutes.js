@@ -3,6 +3,7 @@ const User = require("../models/User");
 const Wallet = require("../models/Wallet");
 const Investment = require("../models/Investment");
 const Transaction = require("../models/Transaction");
+const Notification = require("../models/Notification");
 
 const express = require("express");
 const router = express.Router();
@@ -175,7 +176,7 @@ router.put(
       }
 
       user.kycStatus = "Rejected";
-      user.kycVerifiedAt = new Date();
+      user.kycVerifiedAt = null;
 
        await user.save();
 
@@ -228,8 +229,9 @@ router.get(
     }
   }
 );
+
 /* ==============================
-APPROVE WITHDRAWAL
+   APPROVE WITHDRAWAL
 ============================== */
 
 router.put(
@@ -259,7 +261,9 @@ router.put(
           }
 
           if (existing.type !== "withdrawal") {
-            throw new Error("Transaction is not a withdrawal");
+            throw new Error(
+              "Transaction is not a withdrawal"
+            );
           }
 
           throw new Error(
@@ -267,44 +271,45 @@ router.put(
           );
         }
 
-        const wallet = await Wallet.findOne({
-          user: withdrawal.user,
-        }).session(session);
-
-        if (!wallet) {
-          throw new Error("User wallet not found");
-        }
-
-        const withdrawalAmount = Number(
-          withdrawal.amount || 0
-        );
-
-        if (wallet.balance < withdrawalAmount) {
-          throw new Error(
-            "Insufficient wallet balance for withdrawal approval"
-          );
-        }
-
-        wallet.balance -= withdrawalAmount;
-
-        await wallet.save({
-          session,
-        });
-
         withdrawal.status = "completed";
 
         await withdrawal.save({
           session,
         });
 
+        await Notification.create(
+          [
+            {
+              user: withdrawal.user,
+              title: "Withdrawal Approved",
+              message:
+                `Your withdrawal of ₦${Number(
+                  withdrawal.amount
+                ).toLocaleString()} has been approved ` +
+                "and is being processed for payment.",
+              type: "withdrawal",
+            },
+          ],
+          {
+            session,
+          }
+        );
+
+        const wallet = await Wallet.findOne({
+          user: withdrawal.user,
+        }).session(session);
+
         responseData = {
           withdrawal,
-          walletBalance: wallet.balance,
+          walletBalance: wallet
+            ? wallet.balance
+            : null,
         };
       });
 
       return res.json({
-        message: "Withdrawal approved successfully",
+        message:
+          "Withdrawal approved successfully",
         ...responseData,
       });
     } catch (err) {
@@ -314,12 +319,13 @@ router.put(
       );
 
       if (
-        err.message === "Withdrawal not found" ||
-        err.message === "Transaction is not a withdrawal" ||
-        err.message === "User wallet not found" ||
-        err.message.startsWith("Withdrawal is already") ||
         err.message ===
-          "Insufficient wallet balance for withdrawal approval"
+          "Withdrawal not found" ||
+        err.message ===
+          "Transaction is not a withdrawal" ||
+        err.message.startsWith(
+          "Withdrawal is already"
+        )
       ) {
         return res.status(400).json({
           message: err.message,
@@ -327,7 +333,8 @@ router.put(
       }
 
       return res.status(500).json({
-        message: "Failed to approve withdrawal",
+        message:
+          "Failed to approve withdrawal",
       });
     } finally {
       await session.endSession();
@@ -336,7 +343,7 @@ router.put(
 );
 
 /* ==============================
-REJECT WITHDRAWAL
+   REJECT WITHDRAWAL
 ============================== */
 
 router.put(
@@ -344,48 +351,105 @@ router.put(
   protect,
   admin,
   async (req, res) => {
+    const session = await mongoose.startSession();
+
     try {
-      const withdrawal = await Transaction.findOneAndUpdate(
-        {
+      let responseData;
+
+      await session.withTransaction(async () => {
+        const withdrawal = await Transaction.findOne({
           _id: req.params.id,
           type: "withdrawal",
           status: "pending",
-        },
-        {
-          $set: {
-            status: "failed",
-          },
-        },
-        {
-          new: true,
-        }
-      );
+        }).session(session);
 
-      if (!withdrawal) {
-        const existing = await Transaction.findById(
-          req.params.id
+        if (!withdrawal) {
+          const existing =
+            await Transaction.findById(
+              req.params.id
+            ).session(session);
+
+          if (!existing) {
+            throw new Error(
+              "Withdrawal not found"
+            );
+          }
+
+          if (
+            existing.type !== "withdrawal"
+          ) {
+            throw new Error(
+              "Transaction is not a withdrawal"
+            );
+          }
+
+          throw new Error(
+            `Withdrawal is already ${existing.status}`
+          );
+        }
+
+        const wallet =
+          await Wallet.findOne({
+            user: withdrawal.user,
+          }).session(session);
+
+        if (!wallet) {
+          throw new Error(
+            "User wallet not found"
+          );
+        }
+
+        /*
+         * The amount was deducted when the
+         * withdrawal was requested.
+         *
+         * Since the withdrawal is rejected,
+         * refund the reserved amount.
+         */
+
+        wallet.balance =
+          Number(wallet.balance || 0) +
+          Number(withdrawal.amount || 0);
+
+        await wallet.save({
+          session,
+        });
+
+        withdrawal.status = "failed";
+
+        await withdrawal.save({
+          session,
+        });
+
+        await Notification.create(
+          [
+            {
+              user: withdrawal.user,
+              title: "Withdrawal Rejected",
+              message:
+                `Your withdrawal of ₦${Number(
+                  withdrawal.amount
+                ).toLocaleString()} was rejected. ` +
+                "The amount has been returned to your wallet.",
+              type: "withdrawal",
+            },
+          ],
+          {
+            session,
+          }
         );
 
-        if (!existing) {
-          return res.status(404).json({
-            message: "Withdrawal not found",
-          });
-        }
-
-        if (existing.type !== "withdrawal") {
-          return res.status(400).json({
-            message: "Transaction is not a withdrawal",
-          });
-        }
-
-        return res.status(400).json({
-          message: `Withdrawal is already ${existing.status}`,
-        });
-      }
+        responseData = {
+          withdrawal,
+          walletBalance:
+            wallet.balance,
+        };
+      });
 
       return res.json({
-        message: "Withdrawal rejected successfully",
-        withdrawal,
+        message:
+          "Withdrawal rejected successfully",
+        ...responseData,
       });
     } catch (err) {
       console.error(
@@ -393,9 +457,340 @@ router.put(
         err
       );
 
+      if (
+        err.message ===
+          "Withdrawal not found" ||
+        err.message ===
+          "Transaction is not a withdrawal" ||
+        err.message ===
+          "User wallet not found" ||
+        err.message.startsWith(
+          "Withdrawal is already"
+        )
+      ) {
+        return res.status(400).json({
+          message: err.message,
+        });
+      }
+
       return res.status(500).json({
-        message: "Failed to reject withdrawal",
+        message:
+          "Failed to reject withdrawal",
       });
+    } finally {
+      await session.endSession();
+    }
+  }
+);
+
+/* ==============================
+   GET PENDING INVESTMENTS
+============================== */
+
+router.get(
+  "/investments/pending",
+  protect,
+  admin,
+  async (req, res) => {
+    try {
+      const investments = await Investment.find({
+        status: "pending",
+      })
+        .populate(
+          "user",
+          "name email phone investorId investorTier"
+        )
+        .populate(
+          "transaction",
+          "reference amount status description createdAt"
+        )
+        .sort({ createdAt: -1 });
+
+      return res.json(investments);
+    } catch (err) {
+      console.error(
+        "GET PENDING INVESTMENTS ERROR:",
+        err
+      );
+
+      return res.status(500).json({
+        message: "Failed to fetch pending investments",
+      });
+    }
+  }
+);
+
+
+/* ==============================
+   APPROVE INVESTMENT
+============================== */
+
+router.put(
+  "/investments/:id/approve",
+  protect,
+  admin,
+  async (req, res) => {
+    const session = await mongoose.startSession();
+
+    try {
+      let responseData;
+
+      await session.withTransaction(async () => {
+        const investment = await Investment.findOne({
+          _id: req.params.id,
+          status: "pending",
+        })
+          .populate("user", "name email")
+          .session(session);
+
+        if (!investment) {
+          const existing = await Investment.findById(
+            req.params.id
+          ).session(session);
+
+          if (!existing) {
+            throw new Error("Investment not found");
+          }
+
+          throw new Error(
+            `Investment is already ${existing.status}`
+          );
+        }
+
+        if (!investment.transaction) {
+              throw new Error(
+             "Investment transaction reference is missing"
+            );
+          }
+
+        const transaction = await Transaction.findOne({
+          _id: investment.transaction,
+          type: "investment",
+        }).session(session);
+
+        if (!transaction) {
+          throw new Error(
+            "Investment transaction not found"
+          );
+        }
+
+        if (transaction.status !== "pending") {
+          throw new Error(
+            `Investment transaction is already ${transaction.status}`
+          );
+        }
+
+        investment.status = "active";
+
+        await investment.save({
+          session,
+        });
+
+        transaction.status = "completed";
+
+        await transaction.save({
+          session,
+        });
+
+        await Notification.create(
+          [
+            {
+              user: investment.user._id,
+              title: "Investment Approved",
+              message:
+                `Your ₦${Number(
+                  investment.amount
+                ).toLocaleString()} investment ` +
+                `in the ${investment.plan} plan has been approved ` +
+                "and is now active.",
+              type: "investment",
+            },
+          ],
+          {
+            session,
+          }
+        );
+
+        responseData = {
+          investment,
+          transaction,
+        };
+      });
+
+      return res.json({
+        message: "Investment approved successfully",
+        ...responseData,
+      });
+    } catch (err) {
+      console.error(
+        "INVESTMENT APPROVAL ERROR:",
+        err
+      );
+
+      if (
+        err.message === "Investment not found" ||
+        err.message ===
+          "Investment transaction not found" ||
+        err.message.startsWith(
+          "Investment is already"
+        ) ||
+        err.message.startsWith(
+          "Investment transaction is already"
+        )
+      ) {
+        return res.status(400).json({
+          message: err.message,
+        });
+      }
+
+      return res.status(500).json({
+        message: "Failed to approve investment",
+      });
+    } finally {
+      await session.endSession();
+    }
+  }
+);
+
+
+/* ==============================
+   REJECT INVESTMENT
+============================== */
+
+router.put(
+  "/investments/:id/reject",
+  protect,
+  admin,
+  async (req, res) => {
+    const session = await mongoose.startSession();
+
+    try {
+      let responseData;
+
+      await session.withTransaction(async () => {
+        const investment = await Investment.findOne({
+          _id: req.params.id,
+          status: "pending",
+        }).session(session);
+
+        if (!investment) {
+          const existing = await Investment.findById(
+            req.params.id
+          ).session(session);
+
+          if (!existing) {
+            throw new Error("Investment not found");
+          }
+
+          throw new Error(
+            `Investment is already ${existing.status}`
+          );
+        }
+
+        const transaction = await Transaction.findOne({
+          _id: investment.transaction,
+          type: "investment",
+        }).session(session);
+
+        if (!transaction) {
+          throw new Error(
+            "Investment transaction not found"
+          );
+        }
+
+        if (transaction.status !== "pending") {
+          throw new Error(
+            `Investment transaction is already ${transaction.status}`
+          );
+        }
+
+        const wallet = await Wallet.findOne({
+          user: investment.user,
+        }).session(session);
+
+        if (!wallet) {
+          throw new Error("User wallet not found");
+        }
+
+
+        wallet.balance =
+          Number(wallet.balance || 0) +
+          Number(investment.amount || 0);
+
+        await wallet.save({
+          session,
+        });
+
+        investment.status = "cancelled";
+
+        await investment.save({
+          session,
+        });
+
+        transaction.status = "failed";
+
+        await transaction.save({
+          session,
+        });
+
+        await Notification.create(
+          [
+            {
+              user: investment.user,
+              title: "Investment Rejected",
+              message:
+                `Your ₦${Number(
+                  investment.amount
+                ).toLocaleString()} investment ` +
+                `in the ${investment.plan} plan was rejected. ` +
+                "The amount has been returned to your wallet.",
+              type: "investment",
+            },
+          ],
+          {
+            session,
+          }
+        );
+
+        responseData = {
+          investment,
+          transaction,
+          walletBalance: wallet.balance,
+        };
+      });
+
+      return res.json({
+        message: "Investment rejected successfully",
+        ...responseData,
+      });
+    } catch (err) {
+      console.error(
+        "INVESTMENT REJECTION ERROR:",
+        err
+      );
+
+      if (
+        err.message === "Investment not found" ||
+        err.message ===
+          "Investment transaction not found" ||
+        err.message === "User wallet not found" ||
+        err.message.startsWith(
+          "Investment is already"
+        ) ||
+        err.message.startsWith(
+          "Investment transaction is already"
+        )
+      ) {
+        return res.status(400).json({
+          message: err.message,
+        });
+      }
+
+      return res.status(500).json({
+        message: "Failed to reject investment",
+      });
+    } finally {
+      await session.endSession();
     }
   }
 );

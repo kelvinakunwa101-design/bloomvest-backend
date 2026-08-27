@@ -19,18 +19,18 @@ const notificationSchema = new mongoose.Schema(
     },
 
     type: {
-  type: String,
-  enum: [
-    "investment",
-    "deposit",
-    "withdrawal",
-    "profit",
-    "utility",
-    "kyc",
-    "system",
-  ],
-  default: "system",
-},
+      type: String,
+      enum: [
+        "investment",
+        "deposit",
+        "withdrawal",
+        "profit",
+        "utility",
+        "kyc",
+        "system",
+      ],
+      default: "system",
+    },
 
     read: {
       type: Boolean,

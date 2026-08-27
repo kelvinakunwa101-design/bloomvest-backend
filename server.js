@@ -166,6 +166,7 @@ const investmentPlanRoutes = require("./routes/investmentPlanRoutes");
 const walletRoutes = require("./routes/wallet");
 const analyticsRoutes = require("./routes/analyticsRoutes");
 const notificationRoutes = require("./routes/notificationRoutes");
+const utilityRoutes = require("./routes/utilityRoutes");
 const adminRoutes = require("./routes/adminRoutes");
 
 const processMaturedInvestments = require(
@@ -213,6 +214,13 @@ app.use(
   "/api/transactions",
   transactionRoutes
 );
+
+
+app.use(
+  "/api/utilities",
+  utilityRoutes
+);
+
 
 app.use(
   "/api/investments",
