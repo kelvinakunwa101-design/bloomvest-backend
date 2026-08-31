@@ -7,7 +7,9 @@ const helmet = require("helmet");
 const morgan = require("morgan");
 const rateLimit = require("express-rate-limit");
 
-dotenv.config();
+dotenv.config({
+  path: path.join(__dirname, ".env"),
+});
 
 const app = express();
 
@@ -161,6 +163,7 @@ app.use("/api", apiLimiter);
 const userRoutes = require("./routes/userRoutes");
 const authRoutes = require("./routes/auth");
 const transactionRoutes = require("./routes/transactions");
+const transferRoutes = require("./routes/transfers");
 const investmentRoutes = require("./routes/investment");
 const investmentPlanRoutes = require("./routes/investmentPlanRoutes");
 const walletRoutes = require("./routes/wallet");
@@ -213,6 +216,11 @@ app.use(
 app.use(
   "/api/transactions",
   transactionRoutes
+);
+
+app.use(
+  "/api/transfers",
+  transferRoutes
 );
 
 
