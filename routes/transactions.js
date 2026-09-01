@@ -10,7 +10,6 @@ const Wallet = require("../models/Wallet");
 const Notification = require("../models/Notification");
 
 const USER_TRANSACTION_TYPES = [
-  "deposit",
   "withdrawal",
   "utility",
 ];
@@ -161,9 +160,6 @@ router.post("/", protect, async (req, res) => {
 
       let newBalance = Number(wallet.balance || 0);
 
-      if (type === "deposit") {
-        newBalance += transactionAmount;
-      }
 
       if (type === "utility") {
        newBalance -= transactionAmount;
@@ -216,13 +212,6 @@ router.post("/", protect, async (req, res) => {
 
       let notificationTitle = "";
       let notificationMessage = "";
-
-      if (type === "deposit") {
-        notificationTitle = "Deposit Successful";
-        notificationMessage =
-          `₦${transactionAmount.toLocaleString()} ` +
-          "has been credited to your wallet.";
-      }
 
       if (type === "withdrawal") {
         notificationTitle = "Withdrawal Initiated";

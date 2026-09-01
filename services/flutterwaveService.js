@@ -11,10 +11,9 @@ const TOKEN_URL =
 let cachedToken = null;
 let tokenExpiresAt = 0;
 
-
-// =========================================================
-// CREDENTIAL CHECK
-// =========================================================
+/* =========================================================
+   CREDENTIAL CHECK
+========================================================= */
 
 const checkCredentials = () => {
   if (!CLIENT_ID || !CLIENT_SECRET) {
@@ -24,10 +23,9 @@ const checkCredentials = () => {
   }
 };
 
-
-// =========================================================
-// GENERATE TRACE ID
-// =========================================================
+/* =========================================================
+   TRACE ID
+========================================================= */
 
 const generateTraceId = () => {
   return `${Date.now()}-${Math.random()
@@ -35,10 +33,9 @@ const generateTraceId = () => {
     .substring(2, 14)}`;
 };
 
-
-// =========================================================
-// GET ACCESS TOKEN
-// =========================================================
+/* =========================================================
+   ACCESS TOKEN
+========================================================= */
 
 const getAccessToken = async () => {
   checkCredentials();
@@ -69,12 +66,15 @@ const getAccessToken = async () => {
     }
   );
 
-  const text = await response.text();
+  const text =
+    await response.text();
 
   let data;
 
   try {
-    data = text ? JSON.parse(text) : {};
+    data = text
+      ? JSON.parse(text)
+      : {};
   } catch {
     throw new Error(
       `Flutterwave authentication returned an invalid response (${response.status}).`
@@ -95,22 +95,27 @@ const getAccessToken = async () => {
     );
   }
 
-  cachedToken = data.access_token;
+  cachedToken =
+    data.access_token;
 
   const expiresIn =
-    Number(data.expires_in) || 3600;
+    Number(data.expires_in) ||
+    3600;
 
   tokenExpiresAt =
     Date.now() +
-    Math.max(expiresIn - 60, 60) * 1000;
+    Math.max(
+      expiresIn - 60,
+      60
+    ) *
+      1000;
 
   return cachedToken;
 };
 
-
-// =========================================================
-// GENERIC FLUTTERWAVE REQUEST
-// =========================================================
+/* =========================================================
+   GENERIC FLUTTERWAVE REQUEST
+========================================================= */
 
 const flutterwaveRequest = async (
   endpoint,
@@ -119,27 +124,30 @@ const flutterwaveRequest = async (
   const token =
     await getAccessToken();
 
-  const response = await fetch(
-    `${FLW_BASE_URL}${endpoint}`,
-    {
-      ...options,
+  const response =
+    await fetch(
+      `${FLW_BASE_URL}${endpoint}`,
+      {
+        ...options,
 
-      headers: {
-        Accept: "application/json",
-        "Content-Type":
-          "application/json",
+        headers: {
+          Accept:
+            "application/json",
 
-        Authorization:
-          `Bearer ${token}`,
+          "Content-Type":
+            "application/json",
 
-        "X-Trace-Id":
-          options.traceId ||
-          generateTraceId(),
+          Authorization:
+            `Bearer ${token}`,
 
-        ...(options.headers || {}),
-      },
-    }
-  );
+          "X-Trace-Id":
+            options.traceId ||
+            generateTraceId(),
+
+          ...(options.headers || {}),
+        },
+      }
+    );
 
   const text =
     await response.text();
@@ -147,7 +155,9 @@ const flutterwaveRequest = async (
   let data;
 
   try {
-    data = text ? JSON.parse(text) : {};
+    data = text
+      ? JSON.parse(text)
+      : {};
   } catch {
     throw new Error(
       `Flutterwave returned an invalid response (${response.status}).`
@@ -166,10 +176,251 @@ const flutterwaveRequest = async (
   return data;
 };
 
+/* =========================================================
+   REAL WALLET DEPOSIT
+   Flutterwave v4 Orchestrator
+========================================================= */
 
-// =========================================================
-// GET NIGERIAN BANKS
-// =========================================================
+const createDepositCharge = async ({
+  amount,
+  reference,
+  redirectUrl,
+  customer,
+  paymentMethod,
+}) => {
+  const depositAmount =
+    Number(amount);
+
+  if (
+    !Number.isFinite(
+      depositAmount
+    ) ||
+    depositAmount <= 0
+  ) {
+    throw new Error(
+      "A valid deposit amount is required."
+    );
+  }
+
+  if (!reference) {
+    throw new Error(
+      "Deposit reference is required."
+    );
+  }
+
+  if (!customer?.email) {
+    throw new Error(
+      "Customer email is required."
+    );
+  }
+
+  if (!customer?.name) {
+    throw new Error(
+      "Customer name is required."
+    );
+  }
+
+  if (!paymentMethod?.type) {
+    throw new Error(
+      "Payment method is required."
+    );
+  }
+
+  const nameParts =
+    String(customer.name)
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean);
+
+  const customerPayload = {
+    email: customer.email,
+
+    name: {
+      first:
+        nameParts[0] ||
+        "BloomVest",
+
+      last:
+        nameParts.length > 1
+          ? nameParts[
+              nameParts.length - 1
+            ]
+          : "User",
+    },
+  };
+
+  if (customer.phone) {
+    customerPayload.phone = {
+      country_code:
+        customer.phoneCountryCode ||
+        "234",
+
+      number:
+        String(customer.phone),
+    };
+  }
+
+  const type =
+    String(paymentMethod.type)
+      .trim()
+      .toLowerCase();
+
+  let paymentMethodPayload;
+
+  /* =======================================================
+     CARD
+  ======================================================= */
+
+  if (type === "card") {
+    const card =
+      paymentMethod.card;
+
+    if (
+      !card?.nonce ||
+      !card?.encrypted_card_number ||
+      !card?.encrypted_expiry_month ||
+      !card?.encrypted_expiry_year ||
+      !card?.encrypted_cvv
+    ) {
+      throw new Error(
+        "Encrypted card details are required."
+      );
+    }
+
+    paymentMethodPayload = {
+      type: "card",
+
+      card: {
+        encrypted_card_number:
+          card.encrypted_card_number,
+
+        encrypted_expiry_month:
+          card.encrypted_expiry_month,
+
+        encrypted_expiry_year:
+          card.encrypted_expiry_year,
+
+        encrypted_cvv:
+          card.encrypted_cvv,
+
+        nonce: card.nonce,
+      },
+    };
+  }
+
+  /* =======================================================
+     PAY WITH BANK
+  ======================================================= */
+
+  else if (
+    type === "bank_account"
+  ) {
+    paymentMethodPayload = {
+      type: "bank_account",
+
+      bank_account: {},
+    };
+  }
+
+  /* =======================================================
+     USSD
+  ======================================================= */
+
+  else if (
+    type === "ussd"
+  ) {
+    const bankCode =
+      paymentMethod?.ussd
+        ?.account_bank;
+
+    if (!bankCode) {
+      throw new Error(
+        "Bank code is required for USSD payments."
+      );
+    }
+
+    paymentMethodPayload = {
+      type: "ussd",
+
+      ussd: {
+        account_bank:
+          String(bankCode),
+      },
+    };
+  }
+
+  /* =======================================================
+     OPAY
+  ======================================================= */
+
+  else if (
+    type === "opay"
+  ) {
+    paymentMethodPayload = {
+      type: "opay",
+    };
+  }
+
+  else {
+    throw new Error(
+      `Unsupported payment method: ${type}`
+    );
+  }
+
+  return flutterwaveRequest(
+    "/orchestration/direct-charges",
+    {
+      method: "POST",
+
+      headers: {
+        "X-Idempotency-Key":
+          reference,
+      },
+
+      body: JSON.stringify({
+        amount:
+          depositAmount,
+
+        currency: "NGN",
+
+        reference,
+
+        payment_method:
+          paymentMethodPayload,
+
+        redirect_url:
+          redirectUrl,
+
+        customer:
+          customerPayload,
+      }),
+    }
+  );
+};
+
+/* =========================================================
+   VERIFY DEPOSIT CHARGE
+========================================================= */
+
+const verifyDepositCharge = async (
+  chargeId
+) => {
+  if (!chargeId) {
+    throw new Error(
+      "Charge ID is required."
+    );
+  }
+
+  return flutterwaveRequest(
+    `/charges/${encodeURIComponent(
+      chargeId
+    )}`
+  );
+};
+
+/* =========================================================
+   GET NIGERIAN BANKS
+========================================================= */
 
 const getBanks = async () => {
   return flutterwaveRequest(
@@ -177,16 +428,19 @@ const getBanks = async () => {
   );
 };
 
-
-// =========================================================
-// VERIFY BANK ACCOUNT
-// =========================================================
+/* =========================================================
+   VERIFY BANK ACCOUNT
+========================================================= */
 
 const verifyBankAccount = async ({
   accountNumber,
   bankCode,
 }) => {
-  if (!/^\d{10}$/.test(accountNumber || "")) {
+  if (
+    !/^\d{10}$/.test(
+      accountNumber || ""
+    )
+  ) {
     throw new Error(
       "Account number must contain exactly 10 digits."
     );
@@ -205,8 +459,12 @@ const verifyBankAccount = async ({
 
       body: JSON.stringify({
         account: {
-          code: String(bankCode),
-          number: accountNumber,
+          code: String(
+            bankCode
+          ),
+
+          number:
+            accountNumber,
         },
 
         currency: "NGN",
@@ -215,10 +473,9 @@ const verifyBankAccount = async ({
   );
 };
 
-
-// =========================================================
-// CREATE NIGERIAN BANK TRANSFER
-// =========================================================
+/* =========================================================
+   CREATE NIGERIAN BANK TRANSFER
+========================================================= */
 
 const createTransfer = async ({
   amount,
@@ -227,10 +484,13 @@ const createTransfer = async ({
   narration,
   reference,
 }) => {
-  const transferAmount = Number(amount);
+  const transferAmount =
+    Number(amount);
 
   if (
-    !Number.isFinite(transferAmount) ||
+    !Number.isFinite(
+      transferAmount
+    ) ||
     transferAmount <= 0
   ) {
     throw new Error(
@@ -238,7 +498,11 @@ const createTransfer = async ({
     );
   }
 
-  if (!/^\d{10}$/.test(accountNumber || "")) {
+  if (
+    !/^\d{10}$/.test(
+      accountNumber || ""
+    )
+  ) {
     throw new Error(
       "Account number must contain exactly 10 digits."
     );
@@ -273,13 +537,15 @@ const createTransfer = async ({
           "BloomVest transfer",
 
         payment_instruction: {
-          source_currency: "NGN",
+          source_currency:
+            "NGN",
 
           amount: {
             applies_to:
               "destination_currency",
 
-            value: transferAmount,
+            value:
+              transferAmount,
           },
 
           recipient: {
@@ -292,17 +558,17 @@ const createTransfer = async ({
             },
           },
 
-          destination_currency: "NGN",
+          destination_currency:
+            "NGN",
         },
       }),
     }
   );
 };
 
-
-// =========================================================
-// GET TRANSFER
-// =========================================================
+/* =========================================================
+   GET TRANSFER
+========================================================= */
 
 const getTransfer = async (
   transferId
@@ -320,10 +586,9 @@ const getTransfer = async (
   );
 };
 
-
-// =========================================================
-// EXPORTS
-// =========================================================
+/* =========================================================
+   EXPORTS
+========================================================= */
 
 module.exports = {
   getAccessToken,
@@ -331,4 +596,6 @@ module.exports = {
   verifyBankAccount,
   createTransfer,
   getTransfer,
+  createDepositCharge,
+  verifyDepositCharge,
 };

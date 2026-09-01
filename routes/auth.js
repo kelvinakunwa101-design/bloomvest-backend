@@ -3,6 +3,7 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const mongoose = require("mongoose");
 const User = require("../models/User");
+const Wallet = require("../models/Wallet");
 const {
   generateSecret,
   generateURI,
@@ -80,6 +81,8 @@ const buildUserResponse = (user) => ({
 ========================================================= */
 
 router.post("/register", async (req, res) => {
+  const session = await mongoose.startSession();
+
   try {
     validateJWTSecret();
 
@@ -100,6 +103,7 @@ router.post("/register", async (req, res) => {
     }
 
     const cleanName = String(name).trim();
+
     const cleanEmail = String(email)
       .trim()
       .toLowerCase();
@@ -124,45 +128,63 @@ router.post("/register", async (req, res) => {
     }
 
     /* ==============================
-       CHECK EMAIL
+       CREATE USER + WALLET ATOMICALLY
     ============================== */
 
-    const existingUser = await User.findOne({
-      email: cleanEmail,
-    });
+    let user;
 
-    if (existingUser) {
-      return res.status(400).json({
-        message: "User already exists",
-      });
-    }
+    await session.withTransaction(async () => {
+      const existingUser = await User.findOne({
+        email: cleanEmail,
+      }).session(session);
 
-    /* ==============================
-       HASH PASSWORD
-    ============================== */
+      if (existingUser) {
+        throw new Error("User already exists");
+      }
 
-    const salt = await bcrypt.genSalt(10);
+      const salt = await bcrypt.genSalt(10);
 
-    const hashedPassword = await bcrypt.hash(
-      password,
-      salt
-    );
+      const hashedPassword = await bcrypt.hash(
+        password,
+        salt
+      );
 
-    /* ==============================
-       CREATE USER
-    ============================== */
+      const createdUsers = await User.create(
+        [
+          {
+            name: cleanName,
+            email: cleanEmail,
+            password: hashedPassword,
 
-    const user = await User.create({
-      name: cleanName,
-      email: cleanEmail,
-      password: hashedPassword,
+            accountNumber:
+              generateAccountNumber(),
 
-      accountNumber: generateAccountNumber(),
-      investorId: generateBloomVestId(),
+            investorId:
+              generateBloomVestId(),
 
-      investorTier: "Silver",
-      kycStatus: "Pending",
-      role: "user",
+            investorTier: "Silver",
+            kycStatus: "Pending",
+            role: "user",
+          },
+        ],
+        {
+          session,
+        }
+      );
+
+      user = createdUsers[0];
+
+      await Wallet.create(
+        [
+          {
+            user: user._id,
+            balance: 0,
+          },
+        ],
+        {
+          session,
+        }
+      );
     });
 
     /* ==============================
@@ -195,9 +217,20 @@ router.post("/register", async (req, res) => {
       error.message
     );
 
+    if (
+      error.message ===
+      "User already exists"
+    ) {
+      return res.status(400).json({
+        message: error.message,
+      });
+    }
+
     return res.status(500).json({
       message: "Registration failed",
     });
+  } finally {
+    await session.endSession();
   }
 });
 
@@ -345,8 +378,6 @@ router.post(
         });
       }
 
-      /* Already active */
-
       if (
         user.twoFactor === true &&
         user.twoFactorVerified === true
@@ -357,21 +388,12 @@ router.post(
         });
       }
 
-      /* Generate new Base32 secret */
-
       const secret = generateSecret();
-
-      /*
-       * Store the secret temporarily.
-       * 2FA only becomes active after confirmation.
-       */
 
       user.twoFactorSecret = secret;
       user.twoFactorVerified = false;
 
       await user.save();
-
-      /* Generate authenticator URI */
 
       const uri = generateURI({
         issuer: "BloomVest",
@@ -409,10 +431,6 @@ router.post(
     try {
       const { token } = req.body;
 
-      /* ==============================
-         VALIDATION
-      ============================== */
-
       if (!token) {
         return res.status(400).json({
           message:
@@ -429,10 +447,6 @@ router.post(
             "Verification code must be 6 digits",
         });
       }
-
-      /* ==============================
-         FIND USER
-      ============================== */
 
       const user = await User.findById(
         req.user._id
@@ -451,10 +465,6 @@ router.post(
         });
       }
 
-      /* ==============================
-         VERIFY AUTHENTICATOR CODE
-      ============================== */
-
       const result = await verify({
         secret: user.twoFactorSecret,
         token: verificationToken,
@@ -466,10 +476,6 @@ router.post(
             "Invalid verification code",
         });
       }
-
-      /* ==============================
-         ACTIVATE 2FA
-      ============================== */
 
       user.twoFactor = true;
       user.twoFactorVerified = true;
@@ -514,10 +520,6 @@ router.post(
         token,
       } = req.body;
 
-      /* ==============================
-         VALIDATION
-      ============================== */
-
       if (
         !twoFactorChallenge ||
         !token
@@ -537,10 +539,6 @@ router.post(
             "Verification code must be 6 digits",
         });
       }
-
-      /* ==============================
-         VERIFY CHALLENGE JWT
-      ============================== */
 
       let decodedChallenge;
 
@@ -566,10 +564,6 @@ router.post(
         });
       }
 
-      /* ==============================
-         CHALLENGE TYPE VALIDATION
-      ============================== */
-
       if (
         decodedChallenge.type !==
         TWO_FACTOR_CHALLENGE_TYPE
@@ -580,10 +574,6 @@ router.post(
         });
       }
 
-      /* ==============================
-         CHALLENGE PURPOSE VALIDATION
-      ============================== */
-
       if (
         decodedChallenge.purpose !==
         TWO_FACTOR_PURPOSE
@@ -593,10 +583,6 @@ router.post(
             "Invalid 2FA session",
         });
       }
-
-      /* ==============================
-         USER ID VALIDATION
-      ============================== */
 
       if (
         !decodedChallenge.id ||
@@ -610,10 +596,6 @@ router.post(
         });
       }
 
-      /* ==============================
-         FIND USER
-      ============================== */
-
       const user = await User.findById(
         decodedChallenge.id
       );
@@ -625,10 +607,6 @@ router.post(
         });
       }
 
-      /* ==============================
-         CONFIRM 2FA IS STILL ACTIVE
-      ============================== */
-
       if (
         user.twoFactor !== true ||
         user.twoFactorVerified !== true ||
@@ -639,10 +617,6 @@ router.post(
             "Two-factor authentication is not properly configured",
         });
       }
-
-      /* ==============================
-         VERIFY AUTHENTICATOR CODE
-      ============================== */
 
       const result = await verify({
         secret: user.twoFactorSecret,
@@ -656,10 +630,6 @@ router.post(
         });
       }
 
-      /* =================================================
-         GENERATE NORMAL ACCESS JWT
-      ================================================= */
-
       const jwtToken = jwt.sign(
         {
           id: user._id.toString(),
@@ -671,10 +641,6 @@ router.post(
           expiresIn: JWT_EXPIRES_IN,
         }
       );
-
-      /* ==============================
-         SUCCESS RESPONSE
-      ============================== */
 
       return res.json({
         message:
@@ -699,4 +665,3 @@ router.post(
 );
 
 module.exports = router;
-

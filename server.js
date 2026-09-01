@@ -70,10 +70,13 @@ app.use(
   })
 );
 
-
 app.use(
   express.json({
     limit: "1mb",
+
+    verify: (req, res, buf) => {
+      req.rawBody = buf.toString("utf8");
+    },
   })
 );
 
@@ -171,6 +174,7 @@ const analyticsRoutes = require("./routes/analyticsRoutes");
 const notificationRoutes = require("./routes/notificationRoutes");
 const utilityRoutes = require("./routes/utilityRoutes");
 const adminRoutes = require("./routes/adminRoutes");
+const paymentRoutes = require("./routes/payments");
 
 const processMaturedInvestments = require(
   "./services/processMaturedInvestments"
@@ -223,6 +227,10 @@ app.use(
   transferRoutes
 );
 
+app.use(
+  "/api/payments",
+  paymentRoutes
+);
 
 app.use(
   "/api/utilities",
