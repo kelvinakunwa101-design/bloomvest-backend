@@ -175,6 +175,7 @@ const notificationRoutes = require("./routes/notificationRoutes");
 const utilityRoutes = require("./routes/utilityRoutes");
 const adminRoutes = require("./routes/adminRoutes");
 const paymentRoutes = require("./routes/payments");
+const withdrawalRoutes = require("./routes/withdrawals");
 
 const processMaturedInvestments = require(
   "./services/processMaturedInvestments"
@@ -246,6 +247,11 @@ app.use(
 app.use(
   "/api/investments/plans",
   investmentPlanRoutes
+);
+
+app.use(
+  "/api/withdrawals",
+  withdrawalRoutes
 );
 
 app.use(

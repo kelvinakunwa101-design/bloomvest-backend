@@ -14,6 +14,7 @@ const Notification = require("../models/Notification");
 const {
   createDepositCharge,
   verifyDepositCharge,
+  authorizeDepositCharge,
 } = require("../services/flutterwaveService");
 
 /* =========================================================
@@ -584,6 +585,109 @@ router.post(
         message:
           error.message ||
           "Unable to verify deposit.",
+      });
+    }
+  }
+);
+
+// =========================================================
+// AUTHORIZE DEPOSIT
+// Handles PIN / OTP / other Flutterwave auth models
+// =========================================================
+
+router.post(
+  "/deposit/authorize",
+  protect,
+  async (req, res) => {
+    try {
+      const {
+        reference,
+        chargeId,
+        authorization,
+      } = req.body;
+
+      if (
+        !reference ||
+        !chargeId ||
+        !authorization?.type
+      ) {
+        return res.status(400).json({
+          message:
+            "Reference, charge ID and authorization are required.",
+        });
+      }
+
+      const transaction =
+        await Transaction.findOne({
+          user: req.user.id,
+          type: "deposit",
+          reference: String(reference),
+        });
+
+      if (!transaction) {
+        return res.status(404).json({
+          message:
+            "Deposit transaction not found.",
+        });
+      }
+
+      const providerResponse =
+        await authorizeDepositCharge({
+          chargeId,
+          authorization,
+        });
+
+      const providerData =
+        providerResponse?.data || {};
+
+      const providerStatus =
+        String(
+          providerData.status || ""
+        ).toLowerCase();
+
+      if (
+        providerStatus === "succeeded"
+      ) {
+        const result =
+          await completeVerifiedDeposit({
+            transaction,
+            chargeId,
+            providerResponse,
+          });
+
+        return res.json({
+          success: true,
+          status: result.status,
+          reference,
+          walletBalance:
+            result.walletBalance,
+          message:
+            "Payment authorized and verified.",
+        });
+      }
+
+      return res.json({
+        success: true,
+        status: "pending",
+        reference,
+        chargeId,
+        providerStatus,
+        nextAction:
+          providerData.next_action ||
+          null,
+        message:
+          "Authorization submitted. Complete any remaining payment step.",
+      });
+    } catch (error) {
+      console.error(
+        "DEPOSIT AUTHORIZATION ERROR:",
+        error
+      );
+
+      return res.status(400).json({
+        message:
+          error.message ||
+          "Unable to authorize payment.",
       });
     }
   }

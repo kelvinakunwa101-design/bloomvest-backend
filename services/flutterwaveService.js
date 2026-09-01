@@ -418,14 +418,71 @@ const verifyDepositCharge = async (
   );
 };
 
-/* =========================================================
-   GET NIGERIAN BANKS
-========================================================= */
+// =========================================================
+// UPDATE / AUTHORIZE FLUTTERWAVE CHARGE
+// =========================================================
+
+const authorizeDepositCharge = async ({
+  chargeId,
+  authorization,
+}) => {
+  if (!chargeId) {
+    throw new Error(
+      "Charge ID is required."
+    );
+  }
+
+  if (!authorization?.type) {
+    throw new Error(
+      "Authorization type is required."
+    );
+  }
+
+  return flutterwaveRequest(
+    `/charges/${encodeURIComponent(
+      chargeId
+    )}`,
+    {
+      method: "PUT",
+
+      body: JSON.stringify({
+        authorization,
+      }),
+    }
+  );
+};
+
+// =========================================================
+// GET NIGERIAN BANKS
+// Cached to avoid unnecessary provider requests
+// =========================================================
+
+let cachedBanks = null;
+let banksCachedAt = 0;
+
+const BANK_CACHE_DURATION =
+  10 * 60 * 1000; // 10 minutes
 
 const getBanks = async () => {
-  return flutterwaveRequest(
-    "/banks?country=NG"
-  );
+  const now = Date.now();
+
+  if (
+    cachedBanks &&
+    now - banksCachedAt <
+      BANK_CACHE_DURATION
+  ) {
+    return cachedBanks;
+  }
+
+  const response =
+    await flutterwaveRequest(
+      "/banks?country=NG"
+    );
+
+  cachedBanks = response;
+  banksCachedAt = now;
+
+  return response;
 };
 
 /* =========================================================
@@ -521,11 +578,18 @@ const createTransfer = async ({
   }
 
   return flutterwaveRequest(
-    "/direct-transfers",
-    {
-      method: "POST",
+  "/direct-transfers",
+  {
+    method: "POST",
 
-      body: JSON.stringify({
+    headers: {
+      "X-Idempotency-Key":
+        `BVTRANSFER${Date.now()}${Math.random()
+          .toString(36)
+          .substring(2, 12)}`,
+    },
+
+    body: JSON.stringify({
         action: "instant",
 
         type: "bank",
@@ -598,4 +662,5 @@ module.exports = {
   getTransfer,
   createDepositCharge,
   verifyDepositCharge,
+  authorizeDepositCharge,
 };
