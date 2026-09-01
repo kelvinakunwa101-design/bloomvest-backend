@@ -4,6 +4,7 @@ const Wallet = require("../models/Wallet");
 const Investment = require("../models/Investment");
 const Transaction = require("../models/Transaction");
 const Notification = require("../models/Notification");
+const {createTransfer,} = require("../services/flutterwaveService");
 
 const express = require("express");
 const router = express.Router();
@@ -200,7 +201,7 @@ router.put(
 );
 
 /* ==============================
-GET PENDING WITHDRAWALS
+   GET PENDING WITHDRAWALS
 ============================== */
 
 router.get(
@@ -209,22 +210,27 @@ router.get(
   admin,
   async (req, res) => {
     try {
-      const withdrawals = await Transaction.find({
-        type: "withdrawal",
-        status: "pending",
-      })
-        .populate(
-          "user",
-          "name email phone accountNumber investorId"
-        )
-        .sort({ createdAt: -1 });
+      const withdrawals =
+        await Transaction.find({
+          type: "withdrawal",
+          status: "pending",
+        })
+          .populate(
+            "user",
+            "name email phone accountNumber investorId"
+          )
+          .sort({ createdAt: -1 });
 
-      res.json(withdrawals);
+      return res.json(withdrawals);
     } catch (err) {
-      console.error("GET PENDING WITHDRAWALS ERROR:", err);
+      console.error(
+        "GET PENDING WITHDRAWALS ERROR:",
+        err
+      );
 
-      res.status(500).json({
-        message: "Failed to fetch pending withdrawals",
+      return res.status(500).json({
+        message:
+          "Failed to fetch pending withdrawals",
       });
     }
   }
@@ -239,105 +245,341 @@ router.put(
   protect,
   admin,
   async (req, res) => {
-    const session = await mongoose.startSession();
-
     try {
-      let responseData;
-
-      await session.withTransaction(async () => {
-        const withdrawal = await Transaction.findOne({
+      const withdrawal =
+        await Transaction.findOne({
           _id: req.params.id,
           type: "withdrawal",
           status: "pending",
-        }).session(session);
-
-        if (!withdrawal) {
-          const existing = await Transaction.findById(
-            req.params.id
-          ).session(session);
-
-          if (!existing) {
-            throw new Error("Withdrawal not found");
-          }
-
-          if (existing.type !== "withdrawal") {
-            throw new Error(
-              "Transaction is not a withdrawal"
-            );
-          }
-
-          throw new Error(
-            `Withdrawal is already ${existing.status}`
-          );
-        }
-
-        withdrawal.status = "completed";
-
-        await withdrawal.save({
-          session,
         });
 
-        await Notification.create(
-          [
-            {
-              user: withdrawal.user,
-              title: "Withdrawal Approved",
-              message:
-                `Your withdrawal of ₦${Number(
-                  withdrawal.amount
-                ).toLocaleString()} has been approved ` +
-                "and is being processed for payment.",
-              type: "withdrawal",
-            },
-          ],
-          {
-            session,
-          }
-        );
+      if (!withdrawal) {
+        const existing =
+          await Transaction.findById(
+            req.params.id
+          );
 
-        const wallet = await Wallet.findOne({
-          user: withdrawal.user,
-        }).session(session);
+        if (!existing) {
+          return res.status(404).json({
+            message:
+              "Withdrawal not found",
+          });
+        }
 
-        responseData = {
-          withdrawal,
-          walletBalance: wallet
-            ? wallet.balance
-            : null,
-        };
-      });
+        if (
+          existing.type !==
+          "withdrawal"
+        ) {
+          return res.status(400).json({
+            message:
+              "Transaction is not a withdrawal",
+          });
+        }
 
-      return res.json({
-        message:
-          "Withdrawal approved successfully",
-        ...responseData,
-      });
-    } catch (err) {
-      console.error(
-        "WITHDRAWAL APPROVAL ERROR:",
-        err
-      );
-
-      if (
-        err.message ===
-          "Withdrawal not found" ||
-        err.message ===
-          "Transaction is not a withdrawal" ||
-        err.message.startsWith(
-          "Withdrawal is already"
-        )
-      ) {
         return res.status(400).json({
-          message: err.message,
+          message:
+            `Withdrawal is already ${existing.status}`,
         });
       }
 
+      /*
+       * IMPORTANT:
+       * This route should send the payout
+       * through Flutterwave only after admin
+       * approval.
+       */
+      let providerResponse;
+
+      try {
+        providerResponse =
+          await createTransfer({
+            amount:
+              Number(
+                withdrawal.amount
+              ),
+
+            accountNumber:
+              withdrawal.accountNumber,
+
+            bankCode:
+              withdrawal.bankCode,
+
+            narration:
+              withdrawal.description ||
+              `BloomVest withdrawal to ${withdrawal.accountName}`,
+
+            reference:
+              withdrawal.reference,
+          });
+      } catch (providerError) {
+        console.error(
+          "FLUTTERWAVE WITHDRAWAL APPROVAL ERROR:",
+          providerError
+        );
+
+        await Transaction.findByIdAndUpdate(
+          withdrawal._id,
+          {
+            providerStatus:
+              "processing",
+          }
+        );
+
+        return res.status(202).json({
+          success: true,
+          status: "pending",
+          reference:
+            withdrawal.reference,
+          message:
+            "Withdrawal approved and submitted to Flutterwave for processing.",
+        });
+      }
+
+      const providerData =
+        providerResponse?.data ||
+        {};
+
+      const providerStatus =
+        String(
+          providerData.status ||
+            providerResponse?.status ||
+            "NEW"
+        ).toUpperCase();
+
+      const providerReference =
+        String(
+          providerData.id ||
+            providerData.reference ||
+            ""
+        );
+
+      /*
+       * SUCCESS
+       */
+
+      if (
+        providerStatus ===
+        "SUCCESSFUL"
+      ) {
+        withdrawal.status =
+          "completed";
+
+        withdrawal.providerReference =
+          providerReference;
+
+        withdrawal.providerStatus =
+          providerStatus;
+
+        withdrawal.providerResponseCode =
+          String(
+            providerResponse?.status ||
+              ""
+          );
+
+        await withdrawal.save();
+
+        await Notification.create({
+          user: withdrawal.user,
+          title:
+            "Withdrawal Successful",
+          message:
+            `Your withdrawal of ₦${Number(
+              withdrawal.amount
+            ).toLocaleString()} has been sent to ${withdrawal.accountName}.`,
+          type: "withdrawal",
+        });
+
+        const wallet =
+          await Wallet.findOne({
+            user: withdrawal.user,
+          });
+
+        return res.status(200).json({
+          success: true,
+          status: "completed",
+          reference:
+            withdrawal.reference,
+          providerReference,
+          walletBalance:
+            Number(
+              wallet?.balance || 0
+            ),
+          message:
+            "Withdrawal completed successfully.",
+        });
+      }
+
+      /*
+       * FAILED
+       */
+
+      if (
+        providerStatus === "FAILED" ||
+        providerStatus === "CANCELLED"
+      ) {
+        const session =
+          await mongoose.startSession();
+
+        try {
+          let responseData;
+
+          await session.withTransaction(
+            async () => {
+              const lockedWithdrawal =
+                await Transaction.findById(
+                  withdrawal._id
+                ).session(session);
+
+              if (
+                !lockedWithdrawal ||
+                lockedWithdrawal.status !==
+                  "pending"
+              ) {
+                throw new Error(
+                  "Withdrawal is no longer pending."
+                );
+              }
+
+              const wallet =
+                await Wallet.findOne({
+                  user:
+                    lockedWithdrawal.user,
+                }).session(session);
+
+              if (!wallet) {
+                throw new Error(
+                  "User wallet not found."
+                );
+              }
+
+              wallet.balance =
+                Number(
+                  wallet.balance || 0
+                ) +
+                Number(
+                  lockedWithdrawal.amount ||
+                    0
+                );
+
+              await wallet.save({
+                session,
+              });
+
+              lockedWithdrawal.status =
+                "failed";
+
+              lockedWithdrawal.providerReference =
+                providerReference;
+
+              lockedWithdrawal.providerStatus =
+                providerStatus;
+
+              lockedWithdrawal.providerResponseCode =
+                String(
+                  providerResponse?.status ||
+                    ""
+                );
+
+              lockedWithdrawal.refunded =
+                true;
+
+              await lockedWithdrawal.save({
+                session,
+              });
+
+              await Notification.create(
+                [
+                  {
+                    user:
+                      lockedWithdrawal.user,
+                    title:
+                      "Withdrawal Failed",
+                    message:
+                      `Your withdrawal of ₦${Number(
+                        lockedWithdrawal.amount
+                      ).toLocaleString()} failed and the funds have been returned to your wallet.`,
+                    type:
+                      "withdrawal",
+                  },
+                ],
+                {
+                  session,
+                }
+              );
+
+              responseData = {
+                withdrawal:
+                  lockedWithdrawal,
+                walletBalance:
+                  wallet.balance,
+              };
+            }
+          );
+
+          return res.status(400).json({
+            success: false,
+            status: "failed",
+            reference:
+              withdrawal.reference,
+            ...responseData,
+            message:
+              "Withdrawal failed. Your wallet has been refunded.",
+          });
+        } finally {
+          await session.endSession();
+        }
+      }
+
+      /*
+       * NEW / PENDING
+       */
+
+      withdrawal.providerReference =
+        providerReference;
+
+      withdrawal.providerStatus =
+        providerStatus;
+
+      withdrawal.providerResponseCode =
+        String(
+          providerResponse?.status ||
+            ""
+        );
+
+      await withdrawal.save();
+
+      await Notification.create({
+        user: withdrawal.user,
+        title:
+          "Withdrawal Approved",
+        message:
+          `Your withdrawal of ₦${Number(
+            withdrawal.amount
+          ).toLocaleString()} has been approved and sent for processing.`,
+        type: "withdrawal",
+      });
+
+      return res.status(202).json({
+        success: true,
+        status: "pending",
+        reference:
+          withdrawal.reference,
+        providerReference,
+        providerStatus,
+        message:
+          "Withdrawal approved and submitted to Flutterwave for processing.",
+      });
+    } catch (error) {
+      console.error(
+        "WITHDRAWAL APPROVAL ERROR:",
+        error
+      );
+
       return res.status(500).json({
         message:
+          error.message ||
           "Failed to approve withdrawal",
       });
-    } finally {
-      await session.endSession();
     }
   }
 );

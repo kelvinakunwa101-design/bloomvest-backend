@@ -45,6 +45,11 @@ const transactionSchema = new mongoose.Schema(
       default: "",
     },
 
+       bankCode: {
+       type: String,
+       default: "",
+    },
+
     accountNumber: {
       type: String,
       default: "",

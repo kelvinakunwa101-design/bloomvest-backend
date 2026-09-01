@@ -9,11 +9,7 @@ const Wallet = require("../models/Wallet");
 const Transaction = require("../models/Transaction");
 const Notification = require("../models/Notification");
 
-const {
-  verifyBankAccount,
-  createTransfer,
-  getTransfer,
-} = require("../services/flutterwaveService");
+const {verifyBankAccount,getTransfer,} = require("../services/flutterwaveService");
 
 /* =========================================================
    HELPERS
@@ -162,6 +158,7 @@ router.post("/", protect, async (req, res) => {
                     description?.trim() ||
                     `Withdrawal to ${verifiedAccountName}`,
                   bank,
+                  bankCode,
                   accountNumber,
                   accountName:
                     verifiedAccountName,
@@ -181,74 +178,6 @@ router.post("/", protect, async (req, res) => {
     } finally {
       await session.endSession();
     }
-
-    /* =====================================================
-       3. CREATE REAL FLUTTERWAVE BANK TRANSFER
-    ===================================================== */
-
-    let providerResponse;
-
-    try {
-      providerResponse =
-        await createTransfer({
-          amount:
-            withdrawalAmount,
-          accountNumber,
-          bankCode,
-          narration:
-            description?.trim() ||
-            `BloomVest withdrawal to ${verifiedAccountName}`,
-          reference,
-        });
-    } catch (providerError) {
-      /*
-       * Provider/network uncertainty means
-       * we do NOT immediately refund.
-       * The transfer may have reached Flutterwave.
-       */
-      console.error(
-        "FLUTTERWAVE WITHDRAWAL ERROR:",
-        providerError
-      );
-
-      await Transaction.findByIdAndUpdate(
-        transactionId,
-        {
-          providerStatus:
-            "processing",
-        }
-      );
-
-      return res.status(202).json({
-        success: true,
-        status: "pending",
-        reference,
-        message:
-          "Withdrawal submitted and is being processed.",
-      });
-    }
-
-    console.log(
-      "Flutterwave withdrawal response:",
-      providerResponse
-    );
-
-    const providerData =
-      providerResponse?.data || {};
-
-    const providerStatus =
-      String(
-        providerData.status ||
-          providerResponse?.status ||
-          "NEW"
-      ).toLowerCase();
-
-    const providerReference =
-      String(
-        providerData.id ||
-          providerData.reference ||
-          ""
-      );
 
     /* =====================================================
        4. SUCCESS
