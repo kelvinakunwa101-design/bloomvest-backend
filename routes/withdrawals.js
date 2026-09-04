@@ -9,7 +9,10 @@ const Wallet = require("../models/Wallet");
 const Transaction = require("../models/Transaction");
 const Notification = require("../models/Notification");
 
-const {verifyBankAccount,getTransfer,} = require("../services/flutterwaveService");
+const {
+  verifyBankAccount,
+  getTransfer,
+} = require("../services/flutterwaveService");
 
 /* =========================================================
    HELPERS
@@ -26,7 +29,9 @@ const generateReference = () => {
 };
 
 /* =========================================================
-   CREATE REAL WITHDRAWAL
+   CREATE WITHDRAWAL
+   User submits withdrawal.
+   Funds are reserved and withdrawal waits for admin approval.
 ========================================================= */
 
 router.post("/", protect, async (req, res) => {
@@ -39,28 +44,41 @@ router.post("/", protect, async (req, res) => {
     description,
   } = req.body;
 
+  const normalizedBankCode = String(bankCode || "").trim();
+  const normalizedBank = String(bank || "").trim();
+  const normalizedAccountNumber = String(
+    accountNumber || ""
+  ).trim();
+  const normalizedAccountName = String(
+    accountName || ""
+  ).trim();
+
   const withdrawalAmount = Number(amount);
 
-  if (!bankCode) {
+  /* =====================================================
+     VALIDATION
+  ===================================================== */
+
+  if (!normalizedBankCode) {
     return res.status(400).json({
-      message: "Bank is required.",
+      message: "Bank code is required.",
     });
   }
 
-  if (!bank) {
+  if (!normalizedBank) {
     return res.status(400).json({
       message: "Bank name is required.",
     });
   }
 
-  if (!/^\d{10}$/.test(accountNumber || "")) {
+  if (!/^\d{10}$/.test(normalizedAccountNumber)) {
     return res.status(400).json({
       message:
         "Account number must contain exactly 10 digits.",
     });
   }
 
-  if (!accountName?.trim()) {
+  if (!normalizedAccountName) {
     return res.status(400).json({
       message: "Account name is required.",
     });
@@ -71,29 +89,27 @@ router.post("/", protect, async (req, res) => {
     withdrawalAmount <= 0
   ) {
     return res.status(400).json({
-      message:
-        "Enter a valid withdrawal amount.",
+      message: "Enter a valid withdrawal amount.",
     });
   }
 
-  const reference =
-    generateReference();
+  const reference = generateReference();
 
+  let session = null;
   let transactionId = null;
 
   try {
     /* =====================================================
-       1. VERIFY RECIPIENT ACCOUNT WITH FLUTTERWAVE
+       1. VERIFY BANK ACCOUNT WITH FLUTTERWAVE
     ===================================================== */
 
-    const verification =
-      await verifyBankAccount({
-        accountNumber,
-        bankCode,
-      });
+    const verification = await verifyBankAccount({
+      accountNumber: normalizedAccountNumber,
+      bankCode: normalizedBankCode,
+    });
 
     const verifiedAccountName =
-      verification?.data?.account_name;
+      verification?.data?.account_name?.trim();
 
     if (
       verification?.status !== "success" ||
@@ -106,255 +122,124 @@ router.post("/", protect, async (req, res) => {
     }
 
     /* =====================================================
-       2. RESERVE WALLET + CREATE PENDING TRANSACTION
+       2. RESERVE WALLET + CREATE PENDING WITHDRAWAL
     ===================================================== */
 
-    const session =
-      await mongoose.startSession();
+    session = await mongoose.startSession();
 
-    try {
-      await session.withTransaction(
-        async () => {
-          const wallet =
-            await Wallet.findOne({
-              user: req.user.id,
-            }).session(session);
-
-          if (!wallet) {
-            throw new Error(
-              "Wallet not found."
-            );
-          }
-
-          const balance =
-            Number(wallet.balance || 0);
-
-          if (
-            balance <
-            withdrawalAmount
-          ) {
-            throw new Error(
-              "Insufficient wallet balance."
-            );
-          }
-
-          wallet.balance =
-            balance -
-            withdrawalAmount;
-
-          await wallet.save({
-            session,
-          });
-
-          const transactions =
-            await Transaction.create(
-              [
-                {
-                  user: req.user.id,
-                  type: "withdrawal",
-                  amount:
-                    withdrawalAmount,
-                  description:
-                    description?.trim() ||
-                    `Withdrawal to ${verifiedAccountName}`,
-                  bank,
-                  bankCode,
-                  accountNumber,
-                  accountName:
-                    verifiedAccountName,
-                  status: "pending",
-                  reference,
-                },
-              ],
-              {
-                session,
-              }
-            );
-
-          transactionId =
-            transactions[0]._id;
-        }
-      );
-    } finally {
-      await session.endSession();
-    }
-
-    /* =====================================================
-       4. SUCCESS
-    ===================================================== */
-
-    if (
-      providerStatus ===
-        "successful" ||
-      providerStatus ===
-        "success"
-    ) {
-      await Transaction.findByIdAndUpdate(
-        transactionId,
-        {
-          status: "completed",
-          providerReference,
-          providerStatus,
-          providerResponseCode:
-            String(
-              providerResponse?.status ||
-                ""
-            ),
-        }
-      );
-
-      await Notification.create({
+    await session.withTransaction(async () => {
+      const wallet = await Wallet.findOne({
         user: req.user.id,
-        title:
-          "Withdrawal Successful",
-        message:
-          `₦${withdrawalAmount.toLocaleString()} has been sent to ${verifiedAccountName}.`,
-        type: "withdrawal",
+      }).session(session);
+
+      if (!wallet) {
+        throw new Error("Wallet not found.");
+      }
+
+      const balance = Number(wallet.balance || 0);
+
+      if (balance < withdrawalAmount) {
+        throw new Error(
+          "Insufficient wallet balance."
+        );
+      }
+
+      /*
+       * Reserve the withdrawal amount immediately.
+       * The amount is returned only if admin/provider
+       * ultimately rejects the transfer.
+       */
+      wallet.balance =
+        balance - withdrawalAmount;
+
+      await wallet.save({
+        session,
       });
 
-      const wallet =
-        await Wallet.findOne({
-          user: req.user.id,
-        });
+      const transactions =
+        await Transaction.create(
+          [
+            {
+              user: req.user.id,
+              type: "withdrawal",
+              amount: withdrawalAmount,
 
-      return res.status(201).json({
-        success: true,
-        status: "completed",
-        reference,
-        providerReference,
-        walletBalance:
-          Number(
-            wallet?.balance || 0
-          ),
-        message:
-          "Withdrawal completed successfully.",
-      });
-    }
+              description:
+                String(description || "").trim() ||
+                `Withdrawal to ${verifiedAccountName}`,
 
-    /* =====================================================
-       5. DEFINITIVE FAILURE → REFUND
-    ===================================================== */
+              bank: normalizedBank,
+              bankCode: normalizedBankCode,
 
-    if (
-      providerStatus ===
-        "failed" ||
-      providerStatus ===
-        "cancelled"
-    ) {
-      const refundSession =
-        await mongoose.startSession();
+              accountNumber:
+                normalizedAccountNumber,
 
-      try {
-        await refundSession.withTransaction(
-          async () => {
-            const wallet =
-              await Wallet.findOne({
-                user: req.user.id,
-              }).session(
-                refundSession
-              );
+              accountName:
+                verifiedAccountName,
 
-            if (!wallet) {
-              throw new Error(
-                "Wallet not found during refund."
-              );
-            }
+              status: "pending",
 
-            wallet.balance =
-              Number(
-                wallet.balance || 0
-              ) +
-              withdrawalAmount;
+              /*
+               * Explicitly mark this as waiting
+               * for administrator approval.
+               */
+              providerStatus:
+                "awaiting_admin_approval",
 
-            await wallet.save({
-              session:
-                refundSession,
-            });
+              providerReference: "",
+              providerResponseCode: "",
+              refunded: false,
 
-            await Transaction.findByIdAndUpdate(
-              transactionId,
-              {
-                status: "failed",
-                providerReference,
-                providerStatus,
-                providerResponseCode:
-                  String(
-                    providerResponse?.status ||
-                      ""
-                  ),
-                refunded: true,
-              },
-              {
-                session:
-                  refundSession,
-              }
-            );
-
-            await Notification.create(
-              [
-                {
-                  user: req.user.id,
-                  title:
-                    "Withdrawal Failed",
-                  message:
-                    `Your ₦${withdrawalAmount.toLocaleString()} withdrawal failed and the funds were returned to your wallet.`,
-                  type: "withdrawal",
-                },
-              ],
-              {
-                session:
-                  refundSession,
-              }
-            );
+              reference,
+            },
+          ],
+          {
+            session,
           }
         );
-      } finally {
-        await refundSession.endSession();
-      }
 
-      const wallet =
-        await Wallet.findOne({
-          user: req.user.id,
-        });
+      transactionId = transactions[0]._id;
 
-      return res.status(400).json({
-        success: false,
-        status: "failed",
-        reference,
-        walletBalance:
-          Number(
-            wallet?.balance || 0
-          ),
-        message:
-          "Withdrawal failed. Your wallet has been refunded.",
-      });
-    }
+      /*
+       * Optional notification for the user.
+       */
+      await Notification.create(
+        [
+          {
+            user: req.user.id,
+            title: "Withdrawal Submitted",
+            message:
+              `Your ₦${withdrawalAmount.toLocaleString()} withdrawal has been submitted and is awaiting admin approval.`,
+            type: "withdrawal",
+          },
+        ],
+        {
+          session,
+        }
+      );
+    });
+
+    await session.endSession();
+    session = null;
 
     /* =====================================================
-       6. PENDING / NEW
+       3. RETURN PENDING STATUS
     ===================================================== */
 
-    await Transaction.findByIdAndUpdate(
-      transactionId,
-      {
-        status: "pending",
-        providerReference,
-        providerStatus,
-        providerResponseCode:
-          String(
-            providerResponse?.status ||
-              ""
-          ),
-      }
-    );
+    const wallet = await Wallet.findOne({
+      user: req.user.id,
+    });
 
     return res.status(202).json({
       success: true,
       status: "pending",
       reference,
-      providerReference,
+      transactionId,
+      walletBalance: Number(
+        wallet?.balance || 0
+      ),
       message:
-        "Withdrawal submitted and is being processed.",
+        "Withdrawal submitted successfully and is awaiting admin approval.",
     });
   } catch (error) {
     console.error(
@@ -362,19 +247,39 @@ router.post("/", protect, async (req, res) => {
       error
     );
 
+    if (session) {
+      try {
+        await session.endSession();
+      } catch (sessionError) {
+        console.error(
+          "SESSION CLEANUP ERROR:",
+          sessionError
+        );
+      }
+    }
+
+    /*
+     * If the transaction was created but something
+     * unexpected happened afterwards, mark it as an
+     * internal error. Do NOT automatically refund here
+     * because we need to avoid accidentally refunding
+     * a transaction whose wallet reservation committed.
+     */
     if (transactionId) {
-      /*
-       * Only refund here for errors that happened
-       * before a provider transfer was actually
-       * attempted.
-       */
-      await Transaction.findByIdAndUpdate(
-        transactionId,
-        {
-          providerStatus:
-            "internal_error",
-        }
-      );
+      try {
+        await Transaction.findByIdAndUpdate(
+          transactionId,
+          {
+            providerStatus:
+              "internal_error",
+          }
+        );
+      } catch (updateError) {
+        console.error(
+          "WITHDRAWAL TRANSACTION UPDATE ERROR:",
+          updateError
+        );
+      }
     }
 
     if (
@@ -409,8 +314,7 @@ router.get(
         await Transaction.findOne({
           user: req.user.id,
           type: "withdrawal",
-          reference:
-            req.params.reference,
+          reference: req.params.reference,
         });
 
       if (!transaction) {
@@ -426,9 +330,7 @@ router.get(
        */
       let providerResponse = null;
 
-      if (
-        transaction.providerReference
-      ) {
+      if (transaction.providerReference) {
         try {
           providerResponse =
             await getTransfer(
@@ -444,27 +346,44 @@ router.get(
 
       return res.json({
         success: true,
+
         withdrawal: {
           id: transaction._id,
+
           reference:
             transaction.reference,
+
           providerReference:
             transaction.providerReference,
+
           amount:
             transaction.amount,
+
           status:
             transaction.status,
+
           providerStatus:
             transaction.providerStatus,
+
           bank:
             transaction.bank,
+
+          bankCode:
+            transaction.bankCode,
+
           accountNumber:
             transaction.accountNumber,
+
           accountName:
             transaction.accountName,
+
+          refunded:
+            transaction.refunded,
+
           createdAt:
             transaction.createdAt,
         },
+
         provider:
           providerResponse,
       });
