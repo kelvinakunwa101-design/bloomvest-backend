@@ -24,9 +24,15 @@ router.get("/dashboard", protect, admin, async (req, res) => {
 
     const pendingKyc = await User.countDocuments({ kycStatus: "Pending" });
     const pendingWithdrawals = await Transaction.countDocuments({
-      type: "withdrawal",
-      status: "pending",
-    });
+  type: "withdrawal",
+  status: "pending",
+  $or: [
+    { providerStatus: "awaiting_admin_approval" },
+    { providerStatus: { $exists: false } },
+    { providerStatus: null },
+    { providerStatus: "" },
+  ],
+});
 
     const walletBalances = await Wallet.find();
     const totalBalance = walletBalances.reduce((sum, wallet) => sum + wallet.balance, 0);

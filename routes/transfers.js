@@ -350,17 +350,19 @@ router.post("/", protect, async (req, res) => {
         }
       );
 
-      await Notification.create({
-        user: req.user.id,
-
-        title: "Transfer Successful",
-
-        message:
-          `₦${transferAmount.toLocaleString()} ` +
-          `has been sent to ${accountName}.`,
-
-        type: "transfer",
-      });
+      try {
+  await Notification.create({
+    user: req.user.id,
+    title: "Transfer Successful",
+    message: `₦${transferAmount.toLocaleString()} has been sent to ${accountName}.`,
+    type: "transfer",
+  });
+} catch (notificationError) {
+  console.error(
+    "TRANSFER NOTIFICATION ERROR:",
+    notificationError
+  );
+}
 
       const wallet =
         await Wallet.findOne({
